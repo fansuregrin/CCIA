@@ -74,3 +74,23 @@ C++ 对多进程并不提供内在支持，因此使用C++编写的多进程程�
 
 ### 什么时候不使用并发
 当并发带来的开销大于其收益的时候不使用并发。
+
+## C++ 中的并发和多线程
+C++ 从 c++11 标准开始支持多线程。在 Linux 平台上编译多线程程序需要带上 `-pthread` 选项。
+
+## 开始入门
+
+一个简单的多线程程序：
+```cpp
+#include <iostream>
+#include <thread>
+
+void hello() {
+    std::cout << "Hello Concurrent World\n";
+}
+
+int main() {
+    std::thread t(hello);  // 创建新线程
+    t.join();  // 等待新线程汇入主线程
+}
+```
