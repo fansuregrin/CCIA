@@ -108,4 +108,74 @@ Aborted (core dumped)
 ### 有异常发生的情况下的等待
 在线程对象被销毁之前需要显式地调用`join()`或`detach()`，否则程序就会终止。如果需要让线程脱离，可能线程被创建后就立即调用`detach()`。但是，调用`join()`可能并不这样做，因为，在让这个新线程 join 之前，主线程还有其他事情要做。问题在于，在创建线程和调用`join()`之间的代码执行可能会发生异常，这就会跳过 `join()`，从而导致程序终止。
 
+```cpp
+#include <thread>
+
+void do_something_in_current_thread() {
+    throw 1;
+}
+
+int main() {
+    int a;
+    std::thread t([&] {
+        for (int i=0; i<100000; ++i) {
+            ++a;
+        }
+    });
+    do_something_in_current_thread();
+    t.join();
+}
+```
+
+因此，为了避免有异常抛出时程序被终止，在处理异常时也需要调用 `join()`。
+```cpp
+#include <thread>
+
+void do_something_in_current_thread() {
+    throw 1;
+}
+
+int main() {
+    int a;
+    std::thread t([&] {
+        for (int i=0; i<100000; ++i) {
+            ++a;
+        }
+    });
+    try {
+        do_something_in_current_thread();
+    } catch (...) {
+        t.join();
+        throw;
+    }
+    t.join();
+}
+```
+
+但是，`try/catch` 块的使用非常冗长，而且很容易让范围稍微出错，所以这不是一个理想的解决办法。一种更好的办法是，利用 *RAII机制 (资源获取即初始化, Resource Acquisition Is Initialization)* 来提供一个类，这个类在析构函数中来调用 `join()`。这样的类对创建的线程对象起到了守卫的作用。案例请见 [listing 2.2](../../src/ch02_managing_threads/listing_2_2.cc)。
+
 ### 让线程在后台运行
+
+在线程对象上调用 `detach()` 会让线程在后台运行，无法通过直接的方式与其通信，也不能通过 `join()` 来等待其完成。detached 后的线程的所有权和控制权都移交给 C++ Runtime Library，它会确保当脱离线程退出时与其相关的资源会被正确的回收。
+
+```cpp
+#include <thread>
+
+int main() {
+    std::thread t([] {});
+    t.detach();
+    assert(!t.joinable());  // 脱离后的线程是不能被join的
+}
+```
+
+不能在没有关联执行线程的 `std::thread` 对象上调用 `detach()`：
+```cpp
+#include <thread>
+
+int main() {
+    std::thread t;
+    t.detach(); // 运行出错
+}
+```
+
+一个使用脱离线程的案例：[listing 2.4](../../src/ch02_managing_threads/listing_2_4.cc)。
