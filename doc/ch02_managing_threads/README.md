@@ -6,7 +6,7 @@
     - [Waiting for a thread to complete](#等待线程完成)
     - [Waiting in exceptional circumstances](#有异常发生的情况下的等待)
     - [Running threads in the background](#让线程在后台运行)
-- Passing arguments to a thread function
+- [Passing arguments to a thread function](#向线程函数传递参数)
 - Transferring ownership of a thread
 - Choosing the number of threads at runtime
 - Identifying threads
@@ -179,3 +179,16 @@ int main() {
 ```
 
 一个使用脱离线程的案例：[listing 2.4](../../src/ch02_managing_threads/listing_2_4.cc)。
+
+补充说明:
+主线程退出后，被分离的线程依然在继续运行吗？
+
+当主线程（即main函数所在的那个线程）退出时，操作系统一般会将这个进程下的其他线程结束掉。
+
+在 Linux 系统上，主线程返回时，其他线程会被终止。`pthread_detach` 的 man 手册有一段话验证了这一点：
+> The detached attribute merely determines the behavior of the system when the thread terminates; it does not prevent the thread from being terminated if the process terminates using exit(3) (or equivalently, if the main thread returns).
+
+在 Windows 系统上，应该也是同样的行为。因为，通过下面的例子可以验证。
+
+请看示例代码 [demo_2_1](../../src/ch02_managing_threads/demo_2_1.cc)，如果 `main` 函数在返回前没有执行 `std::this_thread::sleep_for(std::chrono::seconds(5));` 的话，是看不到 `output.txt` 中有写入内容的，甚至 `output.txt` 都来不及创建，写文件的那个线程就被结束掉了。如果主线程延迟退出，就能看到创建了文件 `output.txt` 以及其中写入了 3 行 "hello"。
+
