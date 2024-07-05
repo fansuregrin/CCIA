@@ -1,11 +1,11 @@
 # Managing Threads
 
 ## The Outline
-- Basic thread management
-    - Launching a thread
-    - Waiting for a thread to complete
-    - Waiting in exceptional circumstances
-    - Running threads in the background
+- [Basic thread management](#线程的基本操作)
+    - [Launching a thread](#启动线程)
+    - [Waiting for a thread to complete](#等待线程完成)
+    - [Waiting in exceptional circumstances](#有异常发生的情况下的等待)
+    - [Running threads in the background](#让线程在后台运行)
 - Passing arguments to a thread function
 - Transferring ownership of a thread
 - Choosing the number of threads at runtime
