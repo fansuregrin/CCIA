@@ -242,3 +242,36 @@ void not_oops(int some_param) {
     t.detach();
 }
 ```
+
+### 向线程执行函数传递参数时，参数类型的隐式转换发生在哪个线程
+
+参数类型的隐式转换应该发生在新启动的线程中。请见示例代码 [demo_2_2.cc](../../src/ch02_managing_threads/demo_2_2.cc)。线程执行函数 `f` 接受一个 `int` 类型参数 `i` 和 `A` 类型参数 `a`，它会将 `a` 中的字符串输出 `i` 次。`A` 类型支持从 `char *` 类型隐式转换而来。在函数 `oops` 中，如果给线程构造函数传入的是 `buffer`，那么就会发生隐式的类型转换，程序的执行结果如下：
+
+```
+main thread: 140022842861376
+opps exited
+conversion happens in thread: 140022842857216
+conversion finished
+abcdefghijk
+abcdefghijk
+abcdefghijk
+```
+
+可以看到，当函数 `oops` 退出时，从 `char *` 到 `A` 类型的转换还没有结束，但是 `buffer` 指向的那块字符数组的内容已经被改变了，新线程的执行函数 `f` 输出的结果并不是我们期望的 "12345"，这就发生了未定义行为。
+
+如果我们在给线程函数传递参数时，显示的将 `buffer` 转换成 `A` 类型，就不存在这个问题了：
+```
+main thread: 139829774890816
+conversion happens in thread: 139829774890816
+conversion finished
+opps exited
+12345
+12345
+12345
+```
+
+这个示例同样说明了：向线程执行函数传递参数时，参数类型的隐式转换发生在新启动的线程中。
+
+参考链接：
+- [std::thread::thread - cppref](https://en.cppreference.com/w/cpp/thread/thread/thread)
+- [when-does-the-conversion-happen-when-passing-arguments-to-thread-function](https://stackoverflow.com/questions/73725046/when-does-the-conversion-happen-when-passing-arguments-to-thread-function)
