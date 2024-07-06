@@ -192,3 +192,53 @@ int main() {
 
 请看示例代码 [demo_2_1](../../src/ch02_managing_threads/demo_2_1.cc)，如果 `main` 函数在返回前没有执行 `std::this_thread::sleep_for(std::chrono::seconds(5));` 的话，是看不到 `output.txt` 中有写入内容的，甚至 `output.txt` 都来不及创建，写文件的那个线程就被结束掉了。如果主线程延迟退出，就能看到创建了文件 `output.txt` 以及其中写入了 3 行 "hello"。
 
+## 向线程函数传递参数
+`std::thread` 的构造函数原型如下：
+```cpp
+template< class F, class... Args >
+explicit thread( F&& f, Args&&... args );
+```
+
+它创建一个新的 `std::thread` 对象并将其与执行线程关联。新的执行线程开始执行：
+```cpp
+// until c++23
+INVOKE(decay-copy(std::forward<F>(f)),
+       decay-copy(std::forward<Args>(args))...)
+// since c++23
+std::invoke(auto(std::forward<F>(f)),
+            auto(std::forward<Args>(args))...)
+```
+`decay-copy` 的调用在当前线程中进行求值，因此在求值和复制/移动参数期间引发的任何异常都会在当前线程中引发，而无需启动新线程。当对构造函数的调用完成后，新的执行线程开始调用 `f`。
+
+默认情况下，参数被复制到内部存储中，新创建的执行线程可以访问它们，然后将它们作为右值传递给可调用对象或函数，就好像它们是临时的一样。
+
+```cpp
+void f(int i, const std::string &s);
+
+std::thread t(f, 3, "hello");
+```
+上面这段代码中，"hello" 存储在 .rodata，通过类型 `char const (&) [6]` 传递给 `std::thread` 的构造函数，经过 `decay-copy` 之后以类型 `char *` 传递给函数 `f`。所以，在新的执行线程中，会将 `char *` 转化成 `std::string`，再调用 `f`。
+
+```cpp
+void f(int i, const std::string &s);
+
+void oops(int some_param) {
+    char buffer[1024];
+    sprintf(buffer, "%i", some_param);
+    std::thread t(f, 3, buffer);
+    t.detach();
+}
+```
+而对于这段代码，`buffer` 是 `oops` 中的一个局部变量，当 `oops` 返回时可能新线程中还没有完成从 `char *` 转化成 `std::string` 的操作，而局部变量 `buffer` 已经不存在，会导致未定义的行为。
+
+解决办法就是在传递 `buffer` 给 `std::thread` 的构造函数之前，将 `buffer` 转化成 `std::string`：
+```cpp
+void f(int i, const std::string &s);
+
+void not_oops(int some_param) {
+    char buffer[1024];
+    sprintf(buffer, "%i", some_param);
+    std::thread t(f, 3, std::string(buffer));
+    t.detach();
+}
+```
