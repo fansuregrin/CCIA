@@ -243,6 +243,76 @@ void not_oops(int some_param) {
 }
 ```
 
+如果线程函数接受的参数是一个 `non-const` 引用，直接传递参数会编译失败：
+```cpp
+#include <thread>
+
+void f(int &a) {}
+int main() {
+    int x = 0;
+    // std::thread arguments must be invocable after conversion to rvalues
+    std::thread t(f, x);
+    t.join();
+}
+```
+
+解决办法是用 `std::ref` 将要传递的参数包装一下：
+```cpp
+#include <functional>
+#include <thread>
+
+void f(int &a) {}
+int main() {
+    int x = 0;
+    std::thread t(f, std::ref(x));
+    t.join();
+}
+```
+
+线程函数还可以指定为类的成员函数，这时传递的第一个参数必须是对象的地址：
+```cpp
+#include <thread>
+
+class X {
+public:
+    void do_some_work() {}
+}
+
+int main() {
+    X my_x;
+    std::thread t(&X::do_some_work, &my_x);
+    t.join();
+}
+```
+
+提供参数的另一个有趣的场景是参数不能被复制而只能被移动：一个对象中保存的数据被转移到另一个对象，而原始对象则保持为空。`std::unique_ptr` 就是这样一种类型。
+
+```cpp
+#include <cassert>
+#include <memory>
+#include <thread>
+
+class big_object {
+public:
+    void prepare_data(int x) {
+        m_data = x;
+    }
+private:
+    int m_data;
+};
+
+void process_big_object(std::unique_ptr<big_object> p) {}
+
+int main() {
+    std::unique_ptr<big_object> p(new big_object);
+    p->prepare_data(42);
+    assert(p.get() != nullptr);
+    std::thread t(process_big_object, std::move(p));
+    assert(p.get() == nullptr);
+    t.join();
+}
+```
+
 ### 向线程执行函数传递参数时，参数类型的隐式转换发生在哪个线程
 
 参数类型的隐式转换应该发生在新启动的线程中。请见示例代码 [demo_2_2.cc](../../src/ch02_managing_threads/demo_2_2.cc)。线程执行函数 `f` 接受一个 `int` 类型参数 `i` 和 `A` 类型参数 `a`，它会将 `a` 中的字符串输出 `i` 次。`A` 类型支持从 `char *` 类型隐式转换而来。在函数 `oops` 中，如果给线程构造函数传入的是 `buffer`，那么就会发生隐式的类型转换，程序的执行结果如下：
