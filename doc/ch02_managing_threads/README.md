@@ -7,7 +7,7 @@
     - [Waiting in exceptional circumstances](#有异常发生的情况下的等待)
     - [Running threads in the background](#让线程在后台运行)
 - [Passing arguments to a thread function](#向线程函数传递参数)
-- Transferring ownership of a thread
+- [Transferring ownership of a thread](#线程所有权的转移)
 - Choosing the number of threads at runtime
 - Identifying threads
 
@@ -345,3 +345,56 @@ opps exited
 参考链接：
 - [std::thread::thread - cppref](https://en.cppreference.com/w/cpp/thread/thread/thread)
 - [when-does-the-conversion-happen-when-passing-arguments-to-thread-function](https://stackoverflow.com/questions/73725046/when-does-the-conversion-happen-when-passing-arguments-to-thread-function)
+
+## 线程所有权的转移
+`std::thread` 是不可拷贝，只能移动的。可以通过其移动构造函数和移动赋值操作符来移交执行线程的所有权：
+```cpp
+#include <thread>
+#include <utility>
+
+void some_function() {}
+void some_other_function() {}
+
+int main() {
+    // t1 与一个执行线程相关联
+    std::thread t1(some_function);
+    
+    // t1 对相关联的执行线程的所有权 转移至 t2
+    std::thread t2 = std::move(t1);
+    
+    // 一个临时 thread 对象被构造，它与一个执行线程相关联
+    // 接着这个临时对象对执行线程的所有权转移至 t1
+    t1 = std::thread(some_other_function);
+    
+    // 默认构造，不代表一个线程
+    std::thread t3;
+    // t2 对相关联的执行线程的所有权 转移至 t3
+    t3 = std::move(t2);
+
+    // t1 已经有一个相关联的执行线程
+    // 现在又将 t3 相关联的执行线程的所有权转移至 t1
+    // std::terminate() 会被调用，导致程序终止
+    t1 = std::move(t3);
+}
+```
+
+如何让上面的程序不终止呢？请见 [demo_2_3.cc](../../src/ch02_managing_threads/demo_2_3.cc)。
+
+`std::thread` 支持移动语义，这就意味着可以将执行线程的所有权从函数内转移至函数外部，请见例子 [listing_2_5](../../src/ch02_managing_threads/listing_2_5.cc)。
+
+当然，也可以将执行线程的所有权从函数外部转移至函数内部：
+```cpp
+#include <thread>
+
+void some_func() {}
+void another_func() {}
+void f(std::thread t) { t.join(); }
+
+int main() {
+    f(std::thread(some_func));
+    std::thread t1(another_func);
+    f(std::move(t1));
+}
+```
+
+使用 move 语义，我们可以将 [listing 2.3](../../src/ch02_managing_threads/listing_2_3.cc) 中的 `thread_guard` 从引用一个 thread 改成拿走 thread 的所有权，从而避免因为 `thread_guard` 存活时间比它引用的 thread 长而导致的一些不好的问题，而且只能允许这个新的 `thread_guard` 对象来 join 或 detach 相关联的执行线程。 这个新的类（或者对象）的首要作用是确保离开作用域之前线程能在结束，所以命名为 `scoped_thread`，示例请见 [listing 2.6](../../src/ch02_managing_threads/listing_2_6.cc)。
