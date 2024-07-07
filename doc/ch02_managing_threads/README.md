@@ -398,3 +398,8 @@ int main() {
 ```
 
 使用 move 语义，我们可以将 [listing 2.3](../../src/ch02_managing_threads/listing_2_3.cc) 中的 `thread_guard` 从引用一个 thread 改成拿走 thread 的所有权，从而避免因为 `thread_guard` 存活时间比它引用的 thread 长而导致的一些不好的问题，而且只能允许这个新的 `thread_guard` 对象来 join 或 detach 相关联的执行线程。 这个新的类（或者对象）的首要作用是确保离开作用域之前线程能在结束，所以命名为 `scoped_thread`，示例请见 [listing 2.6](../../src/ch02_managing_threads/listing_2_6.cc)。
+
+C++ 20 中新增了能在析构函数中自动调用 `join()` 的线程类: `jthread`，它的可能实现类似 [listing 2.7](../../src/ch02_managing_threads/listing_2_7.cc)。
+
+`std::thread` 支持移动，所以也允许将 thread 对象存放在容器中，如果容器是 "move-aware" 的话。[listing 2.8](../../src/ch02_managing_threads/listing_2_8.cc) 展示了创建多个线程并等待它们完成。
+
