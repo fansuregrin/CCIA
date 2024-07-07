@@ -8,7 +8,7 @@
     - [Running threads in the background](#让线程在后台运行)
 - [Passing arguments to a thread function](#向线程函数传递参数)
 - [Transferring ownership of a thread](#线程所有权的转移)
-- Choosing the number of threads at runtime
+- [Choosing the number of threads at runtime](#运行时创建指定数量的线程)
 - Identifying threads
 
 ## 线程的基本操作
@@ -403,3 +403,12 @@ C++ 20 中新增了能在析构函数中自动调用 `join()` 的线程类: `jth
 
 `std::thread` 支持移动，所以也允许将 thread 对象存放在容器中，如果容器是 "move-aware" 的话。[listing 2.8](../../src/ch02_managing_threads/listing_2_8.cc) 展示了创建多个线程并等待它们完成。
 
+## 运行时创建指定数量的线程
+C++ 标准库提供了一个函数：`std::thread::hardware_concurrency()`，它返回一个程序能够真正并发执行的线程数，在多核处理器上，它可能返回 CPU 逻辑核心数量。但这个数值只是一个暗示，当信息不可获取时，函数可能返回 0。但是，这个线程数量可以作为将一个任务分割多个并发的子任务并分配给多个线程来做的一个参考值。
+
+[listing 2.9](../../src/ch02_managing_threads/listing_2_9.cc) 展示了一个初级的 `std::accumulate` 的并行实现。它使用 `std::thread::hardware_concurrency()` 返回的线程数量作为参考来设定运行时需要创建的线程数量，然后将要求和的元素平均分配给这些线程，每个线程计算一部分的和，然后由其中一个线程将所有线程计算的和再求和，得到最终的结果。并行实现与标准库中的串行实现的运行时间对比 (计算1000万的元素的和)：
+```
+parallel version: sum = 10000000, took 42ms
+serial version: sum = 10000000, took 216ms
+```
+但是，这个程序假设没有任何代码抛出异常，即没有做异常处理。还由一些问题需要注意：当类型 `T` 的加法运算符不具有结合性 (associative)（例如 float 或 double）时，`parallel_accumulate` 的结果可能与 `std::accumulate` 的结果不同，因为并行算法将数据分块了（例如 `((a+b)+c)+d != (a+b) + (c+d)`）；`parallel_accumulate` 接受的迭代器必须至少是 `forward iterator`，而 `std::accumulate` 只需要是 `input iterator`；`parallel_accumulate` 需要类型 `T` 是 `default-constructible`，因为只有满足这个条件，才可以创建容器 `std::vector<T> results(num_threads)` 来保存每个线程计算的结果。
