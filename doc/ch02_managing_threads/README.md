@@ -9,7 +9,7 @@
 - [Passing arguments to a thread function](#向线程函数传递参数)
 - [Transferring ownership of a thread](#线程所有权的转移)
 - [Choosing the number of threads at runtime](#运行时创建指定数量的线程)
-- Identifying threads
+- [Identifying threads](#线程的识别)
 
 ## 线程的基本操作
 ### 启动线程
@@ -412,3 +412,14 @@ parallel version: sum = 10000000, took 42ms
 serial version: sum = 10000000, took 216ms
 ```
 但是，这个程序假设没有任何代码抛出异常，即没有做异常处理。还由一些问题需要注意：当类型 `T` 的加法运算符不具有结合性 (associative)（例如 float 或 double）时，`parallel_accumulate` 的结果可能与 `std::accumulate` 的结果不同，因为并行算法将数据分块了（例如 `((a+b)+c)+d != (a+b) + (c+d)`）；`parallel_accumulate` 接受的迭代器必须至少是 `forward iterator`，而 `std::accumulate` 只需要是 `input iterator`；`parallel_accumulate` 需要类型 `T` 是 `default-constructible`，因为只有满足这个条件，才可以创建容器 `std::vector<T> results(num_threads)` 来保存每个线程计算的结果。
+
+## 线程的识别
+每一个线程都有一个标识 (identifier)，它的类型是 `std::thread::id`。这个标识可以通过两种方式获取：
+- 在线程对象上调用成员函数 `get_id()` 获取这个线程对象相关联的执行线程的标识（如果对象不与然后执行线程相关联，那么返回值代表“没有任何线程”的意思）
+- 使用 `std::this_thread::get_id()` 获取当前线程的标识
+
+`std::thread::id` 的对象能够自由的被复制和比较：
+- 如果两个 `id` 相等，则说明它们标识着同一个线程或者它们都没有标识任何线程。
+- 如果两个 `id` 不相等，则说明它们标识着两个不同的线程或者其中一个不标识任何线程。
+
+`std::thread::id` 还可以被排序，或者作为关联容器的键，还可以将其写入输出流（例如 `std::cout << std::this_thread::get_id();`）。
