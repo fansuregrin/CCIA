@@ -1,8 +1,8 @@
 # Study Notes for "C++ Concurrency in Action"
 
 ## Table of Contents
-- Hello, world of concurrency in C++!
-- Managing threads
+- [Hello, world of concurrency in C++!](./doc/ch01_hello_world/README.md)
+- [Managing threads](./doc/ch02_managing_threads/README.md)
 - Sharing data between threads
 - Synchronizing concurrent operations
 - The C++ memory model and operations on atomic types
