@@ -3,8 +3,8 @@
 - [Problems with sharing data between threads](#线程间共享数据所带来的问题)
     - [Race conditions](#竞态条件)
     - [Avoiding problematic race conditions](#避免竞态条件)
-- Protecting shared data with mutexes
-    - Using mutexes in C++
+- [Protecting shared data with mutexes](#使用互斥量保护共享数据)
+    - [Using mutexes in C++](#在-c-中使用互斥量)
     - Structuring code for protecting shared data
     - Spotting race conditions inherent in interfaces
     - Deadlock: the problem and a solution
@@ -58,3 +58,37 @@ struct ListNode {
 
 #### 事务
 将对数据的修改看成一项事务 (transaction)，所需的一系列数据修改和读取存储在事务日志中，然后通过单个步骤提交。如果由于数据结构已被另一个线程修改而无法继续提交，则事务将重新启动。
+
+## 使用互斥量保护共享数据
+将访问数据结构的所有代码片段标记为互斥的 (mutually exclusive)，这样如果任何线程正在运行其中一个，则任何尝试访问该数据结构的其他线程都必须等到第一个线程完成。这样就能让其他线程（除了正在修改数据的那个线程之外的线程）看不到被破坏的不变量，从而避免竞态条件的产生。
+
+提供这种数据保护机制之一的是同步原语：*互斥量 (mutex)* (源自 **mut**ual **ex**clusion)。当访问共享数据时，将与之相关的互斥量锁住，当结束访问后解锁。线程库会确保，当一个线程锁住了一个互斥量后，其他想要获取这个互斥量的锁的线程只能等待互斥量被解锁。
+
+但是，互斥量不是万能的 (mutexes are not *silver bullet*)。使用互斥量时，需要组织代码来保护正确的数据、需要避免接口间的竞态条件、需要避免死锁、以及考虑锁的粒度。
+
+### 在 C++ 中使用互斥量
+在 C++ 中，可以通过类 `std::mutex` 来创建一个互斥量对象，调用其成员函数 `lock()` 来锁住互斥量，调用其成员函数 `unlock()` 来解锁互斥量。但是，一般不会直接这么用，因为编写代码时容易忘记解锁而导致一些问题。通常，会使用 `std::lock_guard` 来锁住互斥量：这个类为 mutex 实现了 RAII 机制，在构造函数中会对提供的互斥量进行加锁，然后当对象离开作用域时在析构函数中将互斥量解锁。下面是一个使用 `std::mutext` 和 `std::lock_guard` 的例子 (具体代码请见 [listing 3.1](../../src/ch03_sharing_data_between_threads/listing_3_1.cc))：
+
+```cpp
+#include <list>
+#include <mutex>
+#include <algorithm>
+
+std::list<int> some_list;
+std::mutex some_mtx;
+
+void add_to_list(int new_value) {
+    std::lock_guard<std::mutex> guard(some_mtx);
+    some_list.push_back(new_value);
+}
+
+bool list_contains(int value_to_find) {
+    std::lock_guard<std::mutex> guard(some_mtx);
+    return std::find(some_list.begin(), some_list.end(), value_to_find) !=
+           some_list.end();
+}
+```
+
+上面的例子将需要保护的数据 (即一个 `std::list<int>`) 和互斥量都定义为全局变量，这样做没什么问题，但是不符合 OOP 的思想。通常，会将互斥量和需要保护的数据包装在一个类中 (作为私有成员)，将需要访问被保护数据的一些操作封装起来作为成员函数。如果该类的所有成员函数在访问任何其他数据成员之前锁住互斥量，并在完成后解锁，则可以很好地保护数据。
+
+但是，这也不是万无一失的！如果其中一个成员函数返回指向受保护数据的指针或引用，那么所有成员函数以良好、有序的方式锁定互斥量就无关紧要了，因为这已经在保护罩上炸开了一个大洞。任何有权访问该指针或引用的代码现在都可以访问（并可能修改）受保护的数据，而无需锁定互斥量。因此，**使用互斥量来保护数据需要谨慎地设计良好的接口**！
