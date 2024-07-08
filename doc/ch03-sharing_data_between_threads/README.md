@@ -7,7 +7,7 @@
     - [Using mutexes in C++](#在-c-中使用互斥量)
     - [Structuring code for protecting shared data](#组织代码来保护数据)
     - [Spotting race conditions inherent in interfaces](#发现接口中固有的竞争条件)
-    - Deadlock: the problem and a solution
+    - [Deadlock: the problem and a solution](#死锁问题和解决方案)
     - Further guidelines for avoiding deadlock
     - Flexible locking with `std::unique_lock`
     - Transferring mutex ownership between scopes
@@ -245,3 +245,39 @@ public:
 ```
 
 具体实现：请见[listing 3.5]()。
+
+### 死锁：问题和解决方案
+死锁描述的是两个或多个线程由于相互等待而永远被阻塞的情况。例如：一对线程中的每个线程都需要锁定一对互斥锁才能执行某些操作，并且每个线程都有一个互斥锁并正在等待另一个互斥锁；此时，两个线程都无法继续，因为它们都在等待对方释放其互斥锁。
+
+通用的避免死锁的建议是：永远以相同的次序来锁住两个互斥量。但是，有些时候也会出问题。例如，当交换两个实例中的数据时，为了保证两个实例的数据正确交换，需要锁住分别保护这两个实例的互斥量。以一定的次序锁住这两个互斥量，当两个被交换的实例不同时，没什么问题发生，但是当交换的两个实例是同一个实例，则会造成死锁（因为同一个实例的互斥量不能被锁住两次，c++ 中的 `std::mutex` 是非递归的）。
+
+**C++ 中提供函数 `std::lock`，它可以一次性锁住多个互斥量且没有死锁的风险。**
+
+下面这个例子展示的是一个交换操作（具体代码请见[listing 3.6](../../src/ch03_sharing_data_between_threads/listing_3_6.cc)）：
+```cpp
+class some_big_object {};
+void swap(some_big_object &lhs, some_big_object &rhs) {};
+
+class X {
+public:
+    X(const some_big_object &sd) : some_detail(sd) {}
+    friend void swap(X &lhs, X &rhs);
+    friend std::ostream &operator<<(std::ostream &os, const X &x);
+
+private:
+    some_big_object some_detail;
+    mutable std::mutex mtx;
+};
+
+void swap(X &lhs, X &rhs) {
+    if (&lhs == &rhs) {
+        return;
+    }
+    std::lock(lhs.mtx, rhs.mtx);                                  // 1
+    std::lock_guard<std::mutex> lock_a(lhs.mtx, std::adopt_lock); // 2
+    std::lock_guard<std::mutex> lock_b(rhs.mtx, std::adopt_lock); // 3
+    swap(lhs.some_detail, rhs.some_detail);
+}
+```
+
+在交换函数中，首先会判断两个对象是不是同一个对象，如果不是同一个才交换。1 处会同时锁住 `lhs` 的互斥量和 `rhs` 的互斥量，如果 `std::lock` 已经锁住了一个互斥量，然后尝试锁住另一个互斥量时抛出了异常，已经被锁住的那个互斥量就会释放锁，然后将异常传出 `std::lock`。`std::lock` 提供了 *all-or-nothing* 的语义，要么锁住所有的互斥量，要么一个都不锁住。2 和 3 处初始化 `std::lock_guard` 对象时，多了一个 `std::adopt_lock` 参数，这个参数的意思是告诉 `std::lock_guard`，传入的互斥量已经上锁了，你不用在尝试上锁了，你只需要取得现有锁的所有权就行。
