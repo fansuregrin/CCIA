@@ -5,7 +5,7 @@
     - [Avoiding problematic race conditions](#避免竞态条件)
 - [Protecting shared data with mutexes](#使用互斥量保护共享数据)
     - [Using mutexes in C++](#在-c-中使用互斥量)
-    - Structuring code for protecting shared data
+    - [Structuring code for protecting shared data](#组织代码来保护数据)
     - Spotting race conditions inherent in interfaces
     - Deadlock: the problem and a solution
     - Further guidelines for avoiding deadlock
@@ -92,3 +92,41 @@ bool list_contains(int value_to_find) {
 上面的例子将需要保护的数据 (即一个 `std::list<int>`) 和互斥量都定义为全局变量，这样做没什么问题，但是不符合 OOP 的思想。通常，会将互斥量和需要保护的数据包装在一个类中 (作为私有成员)，将需要访问被保护数据的一些操作封装起来作为成员函数。如果该类的所有成员函数在访问任何其他数据成员之前锁住互斥量，并在完成后解锁，则可以很好地保护数据。
 
 但是，这也不是万无一失的！如果其中一个成员函数返回指向受保护数据的指针或引用，那么所有成员函数以良好、有序的方式锁定互斥量就无关紧要了，因为这已经在保护罩上炸开了一个大洞。任何有权访问该指针或引用的代码现在都可以访问（并可能修改）受保护的数据，而无需锁定互斥量。因此，**使用互斥量来保护数据需要谨慎地设计良好的接口**！
+
+### 组织代码来保护数据
+使用互斥量来保护数据，并不是粗暴地将 `std::lock_guard` 扔进每一个成员函数那样简单；只要有一个 stray pointer/reference，一切保护都是白费。那么，是不是只要不把对被保护数据的指针或引用返回（传回）给调用者，就可以保证数据的安全性呢？答案依然是否定的！因为将对被保护数据的指针或引用传递给要调用的函数，也会让数据陷入危险。下面这个例子展示了这一点：
+
+```cpp
+class some_data {
+public:
+    void do_something() {}
+private:
+    int a;
+    std::string b;
+};
+
+class data_wrapper {
+public:
+    template <typename Func>
+    void process_data(Func func) {
+        std::lock_guard<std::mutex> lck(mtx);
+        func(data); // 将被保护的数据传递给用户提供的函数
+    }
+private:
+    std::mutex mtx;
+    some_data data;
+};
+
+some_data *unproteced;
+void malicious_function(some_data &protected_data) {
+    unproteced = &protected_data;
+}
+
+data_wrapper x;
+void foo() {
+    x.process_data(malicious_function);  // 传入有恶意的函数
+    unproteced->do_something(); // 不受保护地去访问受保护的数据
+}
+```
+
+造成上面这种问题出现的根本原因是：**没有保证所有访问共享数据的代码都是 mutually exclusive 的**。不幸的是，这种问题 C++ 标准库不能帮你解决，责任在于编写代码的程序员！因此，程序员应该遵循一条指南：*不要将指针和对受保护数据的引用传递到锁的范围之外，无论是从函数返回它们，将它们存储在外部可见的内存中，还是将它们作为参数传递给用户提供的函数！*
