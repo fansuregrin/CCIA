@@ -6,7 +6,7 @@
 - [Protecting shared data with mutexes](#使用互斥量保护共享数据)
     - [Using mutexes in C++](#在-c-中使用互斥量)
     - [Structuring code for protecting shared data](#组织代码来保护数据)
-    - Spotting race conditions inherent in interfaces
+    - [Spotting race conditions inherent in interfaces](#发现接口中固有的竞争条件)
     - Deadlock: the problem and a solution
     - Further guidelines for avoiding deadlock
     - Flexible locking with `std::unique_lock`
@@ -130,3 +130,118 @@ void foo() {
 ```
 
 造成上面这种问题出现的根本原因是：**没有保证所有访问共享数据的代码都是 mutually exclusive 的**。不幸的是，这种问题 C++ 标准库不能帮你解决，责任在于编写代码的程序员！因此，程序员应该遵循一条指南：*不要将指针和对受保护数据的引用传递到锁的范围之外，无论是从函数返回它们，将它们存储在外部可见的内存中，还是将它们作为参数传递给用户提供的函数！*
+
+### 发现接口中固有的竞争条件
+考虑数据结构 `stack`，除了构造函数和 `swap()`，还有这些接口：
+- `push`：将一个新元素压入栈中
+- `pop`：从栈中弹出一个元素
+- `top`：获取栈顶元素
+- `empty`：检查栈是否为空
+- `size`：获取栈中保存的元素个数
+
+```cpp
+template <typename T, typename Container=std::deque<T> >
+class stack {
+public:
+    explicit stack(const Container&);
+    explicit stack(Container&& = Container());
+    template <class Alloc> explicit stack(const Alloc&);
+    template <class Alloc> stack(const Container&, const Alloc&);
+    template <class Alloc> stack(Container&&, const Alloc&);
+    template <class Alloc> stack(stack&&, const Alloc&);
+
+    bool empty() const;
+    size_t size() const;
+    T& top();
+    T const& top() const;
+    void push(T const&);
+    void push(T&&);
+    void pop();
+    void swap(stack&&);
+};
+```
+
+`top` 接口会返回对栈顶元素的引用，为了保护数据，需要将改成返回栈顶元素的副本。但是，这仍然会有竞争条件出现的风险。这是接口本身的设计导致的固有的竞争条件。
+
+#### 存在的问题
+**(1) `top()` 和 `empty()` 之间的竞争**
+```cpp
+stack<int> s;
+if (!s.empty()) { // 1
+    int const value = s.top(); // 2
+    s.pop(); // 3
+    do_something(value);
+}
+```
+
+| 线程 t1      | 线程 t2   |
+|   :-:       |  :-:      |
+| `s.empty()` |           |
+|             | `s.pop()` |
+| `s.top()`   |           |
+
+在一个线程 t1 中，1 处的 `s.empty()` 返回 false；然后，在另一个线程 t2 中，由于调用 `s.pop()` 让栈空了；此时 t1 中调用 `s.top()` 就会出现问题。
+
+**(2) `top()` 和 `pop()` 之间的竞争**
+假设栈中至少有两个元素，且只有下面这两个线程，考虑如下执行序列：
+
+| 线程 A      | 线程 B   |
+|   :-:       |  :-:      |
+| `if(!s.empty())` |                  |
+|                  | `if(!s.empty())` |
+| `int const value=s.top();` |        |
+|        | `int const value=s.top();` |
+| `s.pop();` |                        |
+| `do_something(value);` | `s.pop();` |
+|  | `do_something(value);`           |
+
+线程 A 和线程 B 获取到的元素是同一个元素，本来应该是线程 A 和线程 B 各自处理不同的元素，但是现在两个线程处理的是用一个元素，而另一个需要被处理的元素漏掉了，而且永远从栈中消失了。
+
+**(3) 将 `pop` 和 `top` 操作合并**
+`pop()` 接口被设计成将栈顶元素从栈中弹出，并返回给调用者。问题在于将元素返回给调用者时，复制构造可能会抛出异常，这就导致调用方没有接受到元素，元素也从栈中消失了。
+
+#### 解决方法
+##### Option 1: 传入引用
+传递一个变量的引用给 `pop`，在调用 `pop()` 时将弹出的值作为参数接收在该变量中。
+```cpp
+// iterface
+void pop(T &ele);
+
+stack s;
+T e; // 创建一个对象来接受从栈中弹出的值
+s.pop(e);
+```
+这种方法有一个不足：调用方需要在调用 `pop()` 之前创建一个栈中元素类型的实例。对于某些类型来说，这是不切实际的，因为构造实例在时间或资源方面非常昂贵。对于其他类型来说，这并不总是可行的，因为构造函数需要的参数在代码中此时不一定可用。最后，这种方法要求栈中所存储的类型是可赋值的，这是一个重要的限制：许多用户定义的类型不支持赋值。
+
+##### Option 2: 要求不抛出异常的复制构造函数或移动构造函数
+让栈只接受存储那些复制构造函数或移动构造函数不抛异常的类型。这样是安全的，但是局限性太大。
+
+##### Option 3: 返回指向弹出元素的指针
+返回指向弹出元素的指针，因为复制指针不会抛出异常，但是使用指针就意味着要管理分配给元素的内存，增加了额外的负担。可以使用智能指针 `shared_ptr` 来减轻管理内存的负担。
+
+##### Option 5: 提供 Option 1 和 Option2/Option3
+
+##### 一个线程安全栈的例子
+```cpp
+// Listing 3.4 An outline class definition for a thread-safe stack
+#include <exception>
+#include <memory>
+
+struct empty_stack: std::exception {
+    const char * what() const noexcept;
+};
+
+template<typename T>
+class threadsafe_stack {
+public:
+    threadsafe_stack();
+    threadsafe_stack(const threadsafe_stack&);
+    threadsafe_stack &operator=(const threadsafe_stack &) = delete;
+    void push(T new_value);
+    std::shared_ptr<T> pop(); // option 3
+    void pop(T& value); // option 1
+    bool empty() const;
+};
+```
+
+具体实现：请见[listing 3.5]()。
