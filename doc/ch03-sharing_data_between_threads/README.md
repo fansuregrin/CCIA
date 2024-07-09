@@ -281,3 +281,19 @@ void swap(X &lhs, X &rhs) {
 ```
 
 在交换函数中，首先会判断两个对象是不是同一个对象，如果不是同一个才交换。1 处会同时锁住 `lhs` 的互斥量和 `rhs` 的互斥量，如果 `std::lock` 已经锁住了一个互斥量，然后尝试锁住另一个互斥量时抛出了异常，已经被锁住的那个互斥量就会释放锁，然后将异常传出 `std::lock`。`std::lock` 提供了 *all-or-nothing* 的语义，要么锁住所有的互斥量，要么一个都不锁住。2 和 3 处初始化 `std::lock_guard` 对象时，多了一个 `std::adopt_lock` 参数，这个参数的意思是告诉 `std::lock_guard`，传入的互斥量已经上锁了，你不用在尝试上锁了，你只需要取得现有锁的所有权就行。
+
+C++ 17 为这样的场景提供了额外的支持，我们可以使用 `std::scoped_lock` 来代替 `std::lock` 和 `std::lock_guard`。`std::scoped_lock` 是一个*可变参数类模板*，接受一系列的互斥量类型作为模板参数，以及一系列的互斥量作为构造函数的实参。在构造函数中，会用类似 `std::lock` 的方式对传入的这些互斥量进行锁定；在析构函数中，会将所有互斥量解锁。上面的 `swap` 可以改写成：
+```cpp
+void swap(X &lhs, X &rhs) {
+    if (&lhs == &rhs) {
+        return;
+    }
+    std::scoped_lock guard(lhs.mtx, rhs.mtx); // 1
+    swap(lhs.some_detail, rhs.some_detail);
+}
+```
+
+上面的 1 处并没有显式地给出类模板的参数，因为用到了 C++ 17 的新特性：**类模板参数自动推导**。其实，这一行等价于：`std::scoped_lock<std::mutex, std::mutex> guard(lhs.mtx, rhs.mtx)`。
+
+虽然 `std::lock`（和 `std::scoped_lock<>`）可以在需要同时获取两个或更多锁的情况下帮助编码者避免死锁，但如果单独获取它们则无济于事。在这种情况下，则必须依靠开发人员的纪律(准则)来确保不会出现死锁。
+
