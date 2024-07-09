@@ -9,7 +9,7 @@
     - [Spotting race conditions inherent in interfaces](#发现接口中固有的竞争条件)
     - [Deadlock: the problem and a solution](#死锁问题和解决方案)
     - [Further guidelines for avoiding deadlock](#避免死锁的进一步指导)
-    - Flexible locking with `std::unique_lock`
+    - [Flexible locking with `std::unique_lock`](#灵活的锁stdunique_lock)
     - Transferring mutex ownership between scopes
     - Locking at an appropriate granularity
 - Alternative facilities for protecting shared data
@@ -420,3 +420,40 @@ std::thread t2([] { other_func(); });  // 会抛出异常
 在上面的例子中，可以将自定义的类型 `hierarchical_mutex` 作为模板实参传递给类模板 `std::lock_guard`。因为 C++ 规定 `template<class Mutex> lock_guard;` 的模板参数 `Mutex` 只需要满足 `BasicLockable` 要求即可。这个要求规定，对于一个类型 `L` 的对象 `m`，需要满足以下几点：
 - `m.lock()`：阻塞，直到可以为当前执行代理（线程、进程、任务）获取锁为止。如果引发异常，则不会获取锁。
 - `m.unlock()`：在当前执行代理对 `m` 持有非共享锁的前提条件下，释放执行代理持有的非共享锁。不会引发任何异常。
+
+### 灵活的锁：`std::unique_lock`
+C++ 标准库还提供 `std::unique_lock`，它在使用上比 `std::lock_guard` 更加灵活 (通过放宽不变量)，而且它并不总是拥有一个相关的互斥量。
+
+```cpp
+template< class Mutex >
+class unique_lock;
+```
+
+- `std::unique_lock` 有默认构造函数：`unique_lock() noexcept;`，使用默认构造函数创建的 unique_lock 对象并不拥有相关的互斥量。
+- 可以给 `std::unique_lock` 的构造函数传递类型为 `std::adopt_lock_t` 的第二个参数（如 `std::adopt_lock`），让其接受一个已经获得锁的互斥量。对应构造函数：`unique_lock( mutex_type& m, std::adopt_lock_t t );`。
+- 可以给构造函数传递类型为 `std::defer_lock_t` 的第二个参数（如 `std::defer_lock`），从而在构造函数中不上锁。对应构造函数：`unique_lock( mutex_type& m, std::defer_lock_t t ) noexcept;`。
+- 可以给构造函数传递类型为 `std::chrono::duration` 的第二个参数，作为尝试获取锁的一段最长阻塞时间，超过这段时间后返回。对应构造函数：`template< class Rep, class Period >unique_lock( mutex_type& m, const std::chrono::duration<Rep, Period>&  timeout_duration );`。
+- 可以给构造函数传递类型为 `std::chrono::time_point` 的第二个参数，阻塞直到到达指定的时间点或者获得锁。对应构造函数：`template< class Clock, class Duration > unique_lock( mutex_type& m, const std::chrono::time_point<Clock, Duration>& timeout_time );`。
+- `std::unique_lock` 是 *可移动构造的 (MoveConstructible)* 和 *移动赋值的 (MoveAssignable)* 。
+- `std::unique_lock` 是满足 *BasicLockable* 要求的。如果 `Mutex` 满足 *Lockable* 要求，那么 `unique_lock` 也满足 *BasicLockable* 要求（比如，可以把这样的 `unique_lock` 对象作为参数传递给 `std::lock`）；如果 `Mutex` 是满足 *TimedLockable* 要求，`unique_lock` 也满足 *TimedLockable* 要求。
+
+根据以上几点，我们可以将 [listing 3.6](../../src/ch03_sharing_data_between_threads/listing_3_6.cc) 中的 `swap` 函数改用 `unique_lock` 来实现：
+```cpp
+void swap(X &lhs, X &rhs) {
+    if (&lhs == &rhs) {
+        return;
+    }
+    // 传入 `std::defer_lock` 让 mutex 处于解锁状态
+    std::unique_lock<std::mutex> lock_a(lhs.mtx, std::defer_lock);
+    std::unique_lock<std::mutex> lock_b(rhs.mtx, std::defer_lock);
+    // 再使用 `std::lock` 一起上锁
+    std::lock(lock_a, lock_b);
+    swap(lhs.some_detail, rhs.some_detail);
+}
+```
+
+`unqiue_lock` 定义了成员函数：`lock` 和 `unlock`，甚至是 `try_lock`、`try_lock_for`、`try_lock_until`。这些函数会调用底层的 mutex 的同名函数，并更新 `unique_lock` 实例中的一个标志，这个标志表明 mutex 是否被实例所拥有。正所谓“鱼与熊掌不可兼得”，由于这个标志  `unique_lock` 更灵活，但是存储标志需要额外的空间、更新和维护标志的状态需要额外的时间，所以 `unque_lock` 通常比 `lock_guard` 占用更多的空间且性能上有稍微的损失。
+
+有的时候，我们需要就是灵活性，`unique_lock` 有一些情形下比 `lock_guard` 更合适：
+- 当需要推迟上锁时
+- 当需要将锁从一个作用域传递到另一个作用域时
