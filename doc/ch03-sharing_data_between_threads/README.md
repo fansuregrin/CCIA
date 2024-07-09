@@ -8,7 +8,7 @@
     - [Structuring code for protecting shared data](#组织代码来保护数据)
     - [Spotting race conditions inherent in interfaces](#发现接口中固有的竞争条件)
     - [Deadlock: the problem and a solution](#死锁问题和解决方案)
-    - Further guidelines for avoiding deadlock
+    - [Further guidelines for avoiding deadlock](#避免死锁的进一步指导)
     - Flexible locking with `std::unique_lock`
     - Transferring mutex ownership between scopes
     - Locking at an appropriate granularity
@@ -244,7 +244,7 @@ public:
 };
 ```
 
-具体实现：请见[listing 3.5]()。
+具体实现：请见[listing 3.5](../../src/ch03_sharing_data_between_threads/listing_3_5.cc)。
 
 ### 死锁：问题和解决方案
 死锁描述的是两个或多个线程由于相互等待而永远被阻塞的情况。例如：一对线程中的每个线程都需要锁定一对互斥锁才能执行某些操作，并且每个线程都有一个互斥锁并正在等待另一个互斥锁；此时，两个线程都无法继续，因为它们都在等待对方释放其互斥锁。
@@ -297,3 +297,122 @@ void swap(X &lhs, X &rhs) {
 
 虽然 `std::lock`（和 `std::scoped_lock<>`）可以在需要同时获取两个或更多锁的情况下帮助编码者避免死锁，但如果单独获取它们则无济于事。在这种情况下，则必须依靠开发人员的纪律(准则)来确保不会出现死锁。
 
+
+### 避免死锁的进一步指导
+死锁不一定只出现在有锁的地方，没有锁也会出现死锁。比如，两个线程互相等待对方结束时，也会发生死锁 ([demo_3_1](../../src/ch03_sharing_data_between_threads/demo_3_1.cc))：
+```cpp
+void func(std::thread &t) {
+    t.join();  // 等待另一个线程结束
+}
+
+int main() {
+    std::thread t1, t2;
+    t1 = std::thread(func, std::ref(t2));
+    t2 = std::thread(func, std::ref(t1));
+
+    t1.join();
+    t2.join();
+}
+```
+
+避免死锁的指导原则可以归结为一个想法：如果有机会等待另一个线程，就不要等待它。下面这些单独的指导方针提供了识别和消除其他线程正在等待您的可能性的方法：
+
+#### 避免嵌套锁
+已经持有一个锁就不要再获取其他锁。如果需要获取多个锁，请使用 `std::lock` 来避免死锁。
+
+#### 避免在持有锁时调用用户提供的代码
+用户提供的代码会做什么事情是不确定的，它可能会获取锁，这就导致了嵌套锁，有可能会发生死锁。但是，有时候调用用户提供的代码是不可避免的，则需要新的指导方针。
+
+#### 以固定的次序获取锁
+如果必须获取多个锁，并且不能使用 `std::lock` 来一次性获取，最好的做法就是在每个线程中以固定的次序来获取锁。
+
+考虑给每一个节点分配一个互斥量来保护双向链表的情形。当删除一个节点时，需要获取3个锁：当前节点的锁、前一个节点和后一个节点的锁。当遍历链表时，一个线程必须在持有当前节点的锁的同时，去获取下一个节点（往前遍历或往后遍历）的锁，当获取到下一个节点的锁后，才释放当前节点的锁。这样做是为了防止当前节点的指向下一个节点的指针（next 或 prev 指针）被其他线程修改。这种手牵手的加锁方式可以让多个线程访问链表，但为了防止死锁，加锁的顺序必须是固定的。如果一个线程 t1 从前往后遍历链表，另一个线程 t2 从后往前遍历链表。在某个时刻，两个线程遍历到链表的中间位置，有 2 个节点：`... <-> A <-> B <-> ...`。线程 t1 持有节点 A 的锁并尝试去获取节点 B 的锁，线程 t2 持有节点 B 的锁并尝试去获取节点 A 的锁，死锁就发生了。同样的，当某个线程想删除一个节点 B，已经获取了 B 的锁，尝试去获取前一个节点 A 的锁；此时，另一个遍历链表的线程获取了 A 的锁并尝试去获取 B 的锁，死锁也发生了。解决死锁的一个方法是规定只能从前往后获取节点的锁，这样做避免了死锁，但是牺牲了反向遍历链表的功能。
+
+#### 使用层级锁
+层级锁的理念是将应用程序划分为多个层，并确定可能在任何给定层中锁定的所有互斥锁。当代码尝试锁定互斥锁时，如果该互斥锁已持有来自较低层的锁，则不允许锁定该互斥锁。您可以在运行时检查这一点，方法是为每个互斥锁分配层号，并记录每个线程锁定了哪些互斥锁。
+
+C++ 标准库不提供层级锁，可以自行实现。一个简单的层级锁的实现如下 (具体代码请见 [listing 3.8](../../src/ch03_sharing_data_between_threads/listing_3_8.h))：
+```cpp
+class hierarchical_mutex {
+private:
+    const unsigned long hierarchy_value;
+    unsigned long previous_hierarchy_value;
+    std::mutex internal_mutex;
+    thread_local static unsigned long this_thread_hierarchy_value;
+
+    void check_for_hierarchy_violation() {
+        if (this_thread_hierarchy_value <= hierarchy_value) {
+            throw std::logic_error("mutex hierarchy violated");
+        }
+    }
+
+    void update_hierarchy_value() {
+        previous_hierarchy_value = this_thread_hierarchy_value;
+        this_thread_hierarchy_value = hierarchy_value;
+    }
+
+public:
+    explicit hierarchical_mutex(unsigned long value)
+        : hierarchy_value(value), previous_hierarchy_value(0) {}
+
+    void lock() {
+        check_for_hierarchy_violation();
+        internal_mutex.lock();
+        update_hierarchy_value();
+    }
+
+    bool try_lock() {
+        check_for_hierarchy_violation();
+        if (!internal_mutex.try_lock()) {
+            return false;
+        }
+        update_hierarchy_value();
+        return true;
+    }
+
+    void unlock() {
+        if (this_thread_hierarchy_value != hierarchy_value) {
+            throw std::logic_error("mutex hierarchy violated");
+        }
+        this_thread_hierarchy_value = previous_hierarchy_value;
+        internal_mutex.unlock();
+    }
+};
+
+thread_local unsigned long hierarchical_mutex::this_thread_hierarchy_value{
+    std::numeric_limits<unsigned long>::max()};
+```
+
+上面的实现使用 静态的 `thread_local` 变量来存储当前线程的层级值。首先，这个变量是静态的 (specified with `static`)，它可以被所有的互斥量访问。另外，这个变量是线程局部的 (specified with `thread_local`)，它在每一个线程中都有一个副本，不同线程中的值可能不同。这样，每个线程可以独立地使用这个变量来记录当前线程到达的层级值。
+
+使用自定义的层级锁（具体代码请见 [listing 3.7](../../src/ch03_sharing_data_between_threads/listing_3_7.cc)）：
+```cpp
+hierarchical_mutex high_level_mutex(10000);
+hierarchical_mutex low_level_mutex(5000);
+hierarchical_mutex other_mutex(6000);
+
+int do_low_level_stuff() { return 1; }
+
+int low_level_func() {
+    std::lock_guard<hierarchical_mutex> lk(low_level_mutex);
+    return do_low_level_stuff();
+}
+
+void do_high_level_stuff(int some_param) {}
+
+void high_level_func() {
+    std::lock_guard<hierarchical_mutex> lk(high_level_mutex);
+    do_high_level_stuff(low_level_func());
+}
+
+void do_other_stuff() {}
+
+void other_func() {
+    std::lock_guard<hierarchical_mutex> lk(other_mutex);
+    high_level_func();
+    do_other_stuff();
+}
+
+std::thread t1([] { high_level_func(); }); // 不会抛出异常
+std::thread t2([] { other_func(); });  // 会抛出异常
+```
