@@ -10,7 +10,7 @@
     - [Deadlock: the problem and a solution](#死锁问题和解决方案)
     - [Further guidelines for avoiding deadlock](#避免死锁的进一步指导)
     - [Flexible locking with `std::unique_lock`](#灵活的锁stdunique_lock)
-    - Transferring mutex ownership between scopes
+    - [Transferring mutex ownership between scopes](#在作用域之间传递互斥量的所有权)
     - Locking at an appropriate granularity
 - Alternative facilities for protecting shared data
     - Protecting shared data during initialization
@@ -457,3 +457,23 @@ void swap(X &lhs, X &rhs) {
 有的时候，我们需要就是灵活性，`unique_lock` 有一些情形下比 `lock_guard` 更合适：
 - 当需要推迟上锁时
 - 当需要将锁从一个作用域传递到另一个作用域时
+
+### 在作用域之间传递互斥量的所有权
+允许函数锁定互斥锁并将该锁的所有权转移给调用者，以便调用者可以在同一锁的保护下执行其他操作：
+```cpp
+std::unique_lock<std::mutex> get_lock() {
+    extern std::mutex some_mutex;
+    // lk 是自动变量，返回时会被 move 到返回值中
+    std::unique_lock<std::mutex> lk(some_mutex);
+    prepare_data();
+    return lk;
+}
+
+void process_data() {
+    // 锁的所有权从 get_lock 转移到 process_data 中
+    std::unique_lock<std::mutex> lk(get_lock());
+    do_something();
+}
+```
+
+`unique_lock` 还可以主动释放锁。在 `std::unique_lock` 实例被销毁之前释放锁的能力意味着，如果显然不再需要该锁，可以选择在特定代码分支中释放它。这对于应用程序的性能非常重要；持有锁的时间超过所需时间可能会导致性能下降，因为等待锁的其他线程无法继续执行，白白浪费了 CPU 时间。
