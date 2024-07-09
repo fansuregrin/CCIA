@@ -416,3 +416,7 @@ void other_func() {
 std::thread t1([] { high_level_func(); }); // 不会抛出异常
 std::thread t2([] { other_func(); });  // 会抛出异常
 ```
+
+在上面的例子中，可以将自定义的类型 `hierarchical_mutex` 作为模板实参传递给类模板 `std::lock_guard`。因为 C++ 规定 `template<class Mutex> lock_guard;` 的模板参数 `Mutex` 只需要满足 `BasicLockable` 要求即可。这个要求规定，对于一个类型 `L` 的对象 `m`，需要满足以下几点：
+- `m.lock()`：阻塞，直到可以为当前执行代理（线程、进程、任务）获取锁为止。如果引发异常，则不会获取锁。
+- `m.unlock()`：在当前执行代理对 `m` 持有非共享锁的前提条件下，释放执行代理持有的非共享锁。不会引发任何异常。
