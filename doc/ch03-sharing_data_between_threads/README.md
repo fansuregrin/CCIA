@@ -11,7 +11,7 @@
     - [Further guidelines for avoiding deadlock](#避免死锁的进一步指导)
     - [Flexible locking with `std::unique_lock`](#灵活的锁stdunique_lock)
     - [Transferring mutex ownership between scopes](#在作用域之间传递互斥量的所有权)
-    - Locking at an appropriate granularity
+    - [Locking at an appropriate granularity](#以适当的粒度进行锁定)
 - Alternative facilities for protecting shared data
     - Protecting shared data during initialization
     - Protecting rarely updated data structures
@@ -477,3 +477,53 @@ void process_data() {
 ```
 
 `unique_lock` 还可以主动释放锁。在 `std::unique_lock` 实例被销毁之前释放锁的能力意味着，如果显然不再需要该锁，可以选择在特定代码分支中释放它。这对于应用程序的性能非常重要；持有锁的时间超过所需时间可能会导致性能下降，因为等待锁的其他线程无法继续执行，白白浪费了 CPU 时间。
+
+### 以适当的粒度进行锁定
+多个线程正在等待同一资源，如果任何线程持有锁的时间超过必要时间，就会增加等待的总时间。在可能的情况下，仅在访问共享数据时锁定互斥锁；尽可能在锁之外进行任何数据处理。另外，在持有锁的时候，不要做一些耗时的活动，如文件 I/O 等。因为文件 I/O 需要访问磁盘，其速度远远低于在内存中操作数据，这样会影响其他线程的执行效率，从而抵消了多线程带来的性能提升。
+
+这时候，`std::unique_lock` 就能派上用场了。当代码不再需要访问共享数据时，可以调用 `unlock()`，然后如果代码中稍后需要访问，则再次调用 `lock()`：
+```cpp
+void get_and_process_data() {
+    std::unique_lock<std::mutex> lk(the_mutex);
+    some_class data_to_process = get_next_data_chunk();
+    lk.unlock();  // 处理数据时不需要访问共享数据，不需要上锁
+    result_type result = process(data_to_process);
+    lk.lock(); // 写入结果时重新上锁
+    write_result(data_to_process, result);
+}
+```
+
+*一般来说，锁应该只保持执行所需操作所需的最短时间*。
+
+```cpp
+class Y {
+private:
+    mutable std::mutex mtx;
+    int some_detail;
+
+    int get_detail() const {
+        std::lock_guard<std::mutex> lk(mtx);
+        return some_detail;
+    }
+public:
+    explicit Y(int sd) : some_detail(sd) {}
+
+    // 实现 1
+    friend bool operator=(const Y &lhs, const Y &rhs) {
+        if (&lhs == &rhs) { return true; }
+        const int lhs_value = lhs.get_detail();
+        const int rhs_value = rhs.get_detail();
+        return lhs_value == rhs_value;
+    }
+
+    // 实现 2
+    friend bool operator=(const Y &lhs, const Y &rhs) {
+        std::unique_lock<std::mutex> lk_lhs(lhs.mtx, std::defer_lock);
+        std::unique_lock<std::mutex> lk_rhs(rhs.mtx, std::defer_lock);
+        std::lock(lk_lhs, lk_rhs);
+        return lhs.some_detail == rhs.some_detail;
+    }
+};
+```
+
+实现 1 减小了锁的粒度，但微妙地改变了比较的语义。在某一个时刻获取了 `lhs` 的值，此时 `lhs` 的值还不等于 `rhs` 的值，但接着去获取 `rhs` 的值时，`rhs` 的值已经被改为与 `lhs` 相等了。在这个实现中，比较的是 某一时刻 `lhs` 的值 是否与 另一时刻 `rhs` 的值 相等。而在实现 2 中，对 `lhs` 和 `rhs` 同时上锁，比较的是 同一时刻 `lhs` 与 `rhs` 是否相等。
