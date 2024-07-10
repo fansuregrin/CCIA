@@ -563,7 +563,7 @@ void foo() {
 
 上面的代码存在不必要的串行化问题，当共享资源已经初始化后，线程还需要去获取锁，再去检查资源是否被初始化，而没拿到锁的其他线程都得等着。
 
-为了避免这个问题，有个臭名昭著的解法 (双重检查锁定机制, *Double-checked locking*)：
+为了避免这个问题，有个臭名昭著的解法 (双重检查锁定机制, *Double-checked locking pattern*)：
 ```cpp
 std::shared_ptr<some_resource> resource_ptr;
 std::mutex resource_mutex;
@@ -615,3 +615,15 @@ void foo() {
 ```
 
 `std::call_once()` 也可轻松用于类成员的惰性初始化，示例代码请见 [listing 3.12](../../src/ch03_sharing_data_between_threads/listing_3_12.cc)。
+
+初始化过程中可能存在竞争条件的一种情况是使用 `static` 声明的局部变量：
+```cpp
+class my_class;
+
+my_class &get_instance() {
+    static my_class instance;
+    return instance;
+}
+```
+
+在许多 C++11 之前的编译器中，这种竞争条件在实践中是有问题的，因为多个线程可能认为它们是第一个并尝试初始化变量，或者线程可能在另一个线程启动初始化之后但在完成之前尝试使用它。在 C++11 中，这个问题得到了解决：初始化被定义为只在一个线程上发生，并且在初始化完成之前没有其他线程会继续进行，因此竞争条件是关于哪个线程来进行初始化，而不是任何有问题的事情。总之，上面所示的初始化代码在 C++ 11 及以后是天然线程安全的。
