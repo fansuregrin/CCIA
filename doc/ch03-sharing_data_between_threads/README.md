@@ -13,7 +13,7 @@
     - [Transferring mutex ownership between scopes](#在作用域之间传递互斥量的所有权)
     - [Locking at an appropriate granularity](#以适当的粒度进行锁定)
 - [Alternative facilities for protecting shared data](#保护共享数据的替代设施)
-    - Protecting shared data during initialization
+    - [Protecting shared data during initialization](#保护共享数据的初始化)
     - Protecting rarely updated data structures
     - Recursive locking
 
@@ -530,3 +530,88 @@ public:
 
 ## 保护共享数据的替代设施
 互斥量并不是保护共享数据的唯一法宝，在特定场景下，有更合适的替代。一个具有代表性的场景是，共享数据只需要在初始化的时候被保护。用互斥量来保护已经初始化的数据，单纯地是为了保护数据地初始化，其实是不必要的，而且影响性能。
+
+### 保护共享数据的初始化
+假设有一个共享资源，它的初始化开销比较大，所以只在有必要的情况下才初始化（惰性初始化, *Lazy initialization*）。单线程场景的代码如下：
+```cpp
+std::shared_ptr<some_resource> resource_ptr;
+
+void foo() {
+    // 资源还没被初始化，那就初始化
+    if (!resource_ptr) {
+        resource_ptr.reset(new some_resource); // 1
+    }
+    resource_ptr->do_something();
+}
+```
+
+在多线程场景下，如果对共享资源本身的并发访问是安全的，那么唯一需要保护的就是 1 处的代码。多个线程可能会重复的对共享资源进行初始化。将上面的单线程代码改为多线程代码，比较单纯的实现如下：
+```cpp
+std::shared_ptr<some_resource> resource_ptr;
+std::mutex resource_mutex;
+
+void foo() {
+    // 所有的线程都串行在这里（在这里排队等候，拿到锁的线程才去尝试初始化）
+    std::unique_lock<std::mutex> lk(resource_mutex);
+    if (!resource_ptr) {
+        resource_ptr.reset(new some_resource); // 只有初始化资源才需要保护
+    }
+    lk.unlock();
+    resource_ptr->do_something();
+}
+```
+
+上面的代码存在不必要的串行化问题，当共享资源已经初始化后，线程还需要去获取锁，再去检查资源是否被初始化，而没拿到锁的其他线程都得等着。
+
+为了避免这个问题，有个臭名昭著的解法 (双重检查锁定机制, *Double-checked locking*)：
+```cpp
+std::shared_ptr<some_resource> resource_ptr;
+std::mutex resource_mutex;
+
+void foo() {
+    if (!resource_ptr) {  // 1
+        std::unique_lock<std::mutex> lk(resource_mutex);
+        if (!resource_ptr) {  // 2
+            resource_ptr.reset(new some_resource);  // 3
+        }
+    }
+    resource_ptr->do_something();  // 4
+}
+```
+
+但是，这种机制有不好的竞争条件。1 处读取 `resource_ptr` 的操作在锁的保护之外，它与其他线程对 `resource_ptr` 的写入是不同步的。即使一个线程看到了写入 `resource_ptr` 的值，它可能还没看到 `resource_ptr` 所指向的资源，接着在 4 处就会出现未定义的行为。
+
+好在，C++ 标准为这个场景提供了专门的解决方案：`std::once_flag` 和 `std::call_once`。
+
+```cpp
+template< class Callable, class... Args >
+void call_once( std::once_flag& flag, Callable&& f, Args&&... args );
+
+class once_flag;
+```
+
+`call_once` 接受一个 `std::once_flag` 类型的标志 `flag`，一个可调用的对象 `f`，以及传递给 `f` 的参数。`call_once` 对 `f` 只会执行一次：
+- 当调用 `call_once` 时 `flag` 标志着 `f` 已经被执行了，`call_once` 会直接返回。(这种情况下对 `call_once` 的调用称为 *passive*)。
+- 当 `flag` 没有标志 `f` 已经被执行，`call_once` 会去调用 `f` (`INVOKE(std::forward<Callable>(f), std::forward<Args>(args)...)`)。（这种情况下对 `call_once` 的调用称为 *active*）。
+    - 如果对 `f` 的调用抛出了异常，异常会传播给调用 `call_once` 的调用者，`flag` 也不会翻转。（这种情况下对 `call_once` 的调用称为 *exceptional*）。
+    - 如果对 `f` 的调用正常，`flag` 被翻转，所有其他的带有相同 `flag` 的对 `call_once` 的调用都会是 *passive* 的。
+
+同一标志上的所有活动调用 (active calls) 形成一个由零个或多个异常调用 (exceptional calls) 组成的单个全序，后跟一个返回调用 (returning calls)。每个活动调用的结束与该顺序中的下一个活动调用同步。
+
+因此，上面的案例代码可以改写成：
+```cpp
+std::shared_ptr<some_resource> resource_ptr;
+std::once_flag resource_flag;
+
+void init_resource() {
+    resource_ptr.reset(new some_resource);
+}
+
+void foo() {
+    // 这里使用 `std::call_once` 的开销比使用 `std::mutex` 小
+    std::call_once(resource_flag, init_resource);
+    resource_ptr->do_something();
+}
+```
+
+`std::call_once()` 也可轻松用于类成员的惰性初始化，示例代码请见 [listing 3.12](../../src/ch03_sharing_data_between_threads/listing_3_12.cc)。
