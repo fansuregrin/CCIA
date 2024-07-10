@@ -14,7 +14,7 @@
     - [Locking at an appropriate granularity](#以适当的粒度进行锁定)
 - [Alternative facilities for protecting shared data](#保护共享数据的替代设施)
     - [Protecting shared data during initialization](#保护共享数据的初始化)
-    - Protecting rarely updated data structures
+    - [Protecting rarely updated data structures](#保护很少更新的数据结构)
     - Recursive locking
 
 ## 线程间共享数据所带来的问题
@@ -627,3 +627,49 @@ my_class &get_instance() {
 ```
 
 在许多 C++11 之前的编译器中，这种竞争条件在实践中是有问题的，因为多个线程可能认为它们是第一个并尝试初始化变量，或者线程可能在另一个线程启动初始化之后但在完成之前尝试使用它。在 C++11 中，这个问题得到了解决：初始化被定义为只在一个线程上发生，并且在初始化完成之前没有其他线程会继续进行，因此竞争条件是关于哪个线程来进行初始化，而不是任何有问题的事情。总之，上面所示的初始化代码在 C++ 11 及以后是天然线程安全的。
+
+### 保护很少更新的数据结构
+有一种场景：大多数时候，该数据结构是只读的，因此可以被多个线程同时读取，但有时该数据结构可能需要更新。比如，考虑一个用于存储 DNS 条目缓存的表，该缓存用于将域名解析为其对应的 IP 地址。通常，给定的 DNS 条目将在很长一段时间内保持不变。尽管随着用户访问不同的网站，可能会不时将新条目添加到表中，但这些已经添加上去的条目在其整个生命周期内将基本保持不变。尽管更新很少见，但仍有可能发生，并且如果要从多个线程访问此缓存，则需要在更新期间对其进行适当保护，以确保读取缓存的任何线程都不会看到损坏的数据结构。
+
+但是，使用 `std::mutex` 来保护数据结构过于悲观，因为它会消除在数据结构未被修改时读取数据结构的并发性（换句话说，使用互斥锁，多个线程不能同时去读数据）。所以，需要一种新的锁来适应这种场景。这种锁叫做读写锁（reader-writer lock/mutex）：它可以由单个“写者”线程进行独占访问，或者由多个“读者”线程进行的并发访问。
+
+C++ 17 标准库提供两个这样的 mutex：`std::shared_mutex` 和 `std::shared_timed_mutex`，其中 `std::shared_timed_mutex` 从 C++ 14 就提供了。这两个 mutex 提供了两种级别的访问：
+- 独占式访问（exclusive）：只有一个线程能拥有这个 mutex
+- 共享式访问（shared）：多个线程能共享同一个 mutex 的所有权
+
+C++ 14 标准库还新增了一个 RAII 类模板：`std::shared_lock`，它对共享式的 mutex 进行包装，提供共享式访问。`std::shared_lock` 的模板参数 `Mutex` 需要满足 *SharedLockable* 要求。
+
+为了使类型 `L` 成为 *SharedLockable*，类型 `L` 的对象 `m` 必须满足以下条件：
+
+
+| 表达式 | 前置条件 | 效果 | 返回值 |
+| --- | --- | --- | --- |
+| `m.lock_shared()` |  | 阻塞，直到可以为当前执行代理（线程、进程、任务）获取锁为止。如果引发异常，则不会获取锁。| |
+| `m.try_lock_shared()` | 尝试以非阻塞方式获取当前执行代理（线程、进程、任务）的锁。如果引发异常，则不会获取锁。| | 如果获得了锁，则返回 `true`，否则返回 `false` |
+| `m.unlock_shared()` | 当前执行代理对 `m` 持有共享锁。| 释放执行代理持有的共享锁。不会引发任何异常。 | |
+
+下面看一个具体示例：
+```cpp
+class dns_entry;
+
+class dns_cache {
+private:
+    std::map<std::string, dns_entry> entries;
+    mutable std::shared_mutex entry_mutex;
+public:
+    dns_entry find_entry(const std::string &domain) const {
+        // 此处共享式访问
+        std::shared_lock<std::shared_mutex> lk(entry_mutex); // 1
+        const std::map<std::string, dns_entry>::const_iterator it = entries
+            .find(domain);
+        return (it == entries.end() ? dns_entry() : it->second);
+    }
+
+    void update_or_add_entry(const std::string &domain,
+    const dns_entry &dns_details) {
+        // 此处独占式访问
+        std::lock_guard<std::shared_mutex> lk(entry_mutex); // 2
+        entries[domain] = dns_details;
+    }
+};
+```
