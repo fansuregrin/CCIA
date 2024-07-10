@@ -12,7 +12,7 @@
     - [Flexible locking with `std::unique_lock`](#灵活的锁stdunique_lock)
     - [Transferring mutex ownership between scopes](#在作用域之间传递互斥量的所有权)
     - [Locking at an appropriate granularity](#以适当的粒度进行锁定)
-- Alternative facilities for protecting shared data
+- [Alternative facilities for protecting shared data](#保护共享数据的替代设施)
     - Protecting shared data during initialization
     - Protecting rarely updated data structures
     - Recursive locking
@@ -527,3 +527,6 @@ public:
 ```
 
 实现 1 减小了锁的粒度，但微妙地改变了比较的语义。在某一个时刻获取了 `lhs` 的值，此时 `lhs` 的值还不等于 `rhs` 的值，但接着去获取 `rhs` 的值时，`rhs` 的值已经被改为与 `lhs` 相等了。在这个实现中，比较的是 某一时刻 `lhs` 的值 是否与 另一时刻 `rhs` 的值 相等。而在实现 2 中，对 `lhs` 和 `rhs` 同时上锁，比较的是 同一时刻 `lhs` 与 `rhs` 是否相等。
+
+## 保护共享数据的替代设施
+互斥量并不是保护共享数据的唯一法宝，在特定场景下，有更合适的替代。一个具有代表性的场景是，共享数据只需要在初始化的时候被保护。用互斥量来保护已经初始化的数据，单纯地是为了保护数据地初始化，其实是不必要的，而且影响性能。
