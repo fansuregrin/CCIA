@@ -1,0 +1,27 @@
+# Synchronizing Concurrent Operations
+# The Outline
+- Waiting for an event or other condition
+    - Waiting for a condition with condition variables
+    - Building a thread-safe queue with condition variables
+- Waiting for one-off events with futures
+    - Returning values from background tasks
+    - Associating a task with a future
+    - Making (std::)promises
+    - Saving an exception for the future
+    - Waiting from multiple threads
+- Waiting with a time limit
+    - Clocks
+    - Durations
+    - Time points
+    - Functions that accept timeouts
+- Using synchronization of operations to simplify code
+    - Functional programming with futures
+    - Synchronizing operations with message passing
+    - Continuation-style concurrency with the Concurrency TS
+    - Chaining continuations
+    - Waiting for more than one future
+    - Waiting for the first future in a set with when_any
+    - Latches and barriers in the Concurrency TS
+    - A basic latch type: `std::experimental::latch`
+    - `std::experimental::barrier`: a basic barrier
+    - `std::experimental::flex_barrier` — `std::experimental::barrier`’s flexible friend
