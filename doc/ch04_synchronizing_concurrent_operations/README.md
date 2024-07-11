@@ -234,3 +234,70 @@ public:
 // 调用 tmp()，这里的 tmp 是从 std::move(move_only()) 构造的
 auto f5 = std::async(move_only());
 ```
+
+默认情况下，`std::async` 是否会启动一个新的线程是由实现决定的。但是，我们可以自己指定 `std::async` 的启动策略 (launch policy)。`std::async` 有一个重载版本：
+```cpp
+// since C++11, until C++17
+template< class F, class... Args >
+std::future<typename std::result_of<typename std::decay<F>::type(
+        typename std::decay<Args>::type...)>::type>
+    async( std::launch policy, F&& f, Args&&... args );
+// since C++17
+template< class F, class... Args >
+std::future<std::invoke_result_t<std::decay_t<F>,
+                                 std::decay_t<Args>...>>
+    async( std::launch policy, F&& f, Args&&... args );
+```
+它的第一个参数 `policy` 是一个枚举类型 `std::launch`，有两个常量值：`std::launch::async` 和 `std::launch::deferred`。当 `policy` 指定为 `std::launch::async`，表示要执行的任务将在新的独立线程中执行；当 `policy` 指定为 `std::launch::deferred`，表示将要执行的任务推迟到在 `future` 上调用 `wait()` 或 `get()` 时执行，任务的执行跟调用 `wait()` 或 `get()` 在同一个线程。`std::launch` 是一个 [*BitmaskType*](https://en.cppreference.com/w/cpp/named_req/BitmaskType)，所以 `policy` 还可以指定为 `std::launch::async | std::launch::deferred`，表示由实现来选择以哪一种策略来启动。
+
+```cpp
+// tmpy(1.2) 在新线程中运行
+auto f6 = std::async(std::launch::async, Y(), 1.2);
+// baz(x) 在 f7.wait() 或 f7.get() 时调用
+auto f7 = std::async(std::launch::deferred, baz, std::ref(x));
+// 由实现选择
+auto f8 = std::async(std::launch::async | std::launch::deferred, baz, std::ref(x));
+auto f9 = std::async(baz, std::ref(x));
+// 在此处才调用 baz(x)
+f7.wait();
+```
+
+[demo 4.1](../../src/ch04_synchronizing_concurrent_operations/demo_4_1.cc) 可以测试 `policy` 设置为这几种值后的 `std::async` 的实际行为。
+```cpp
+std::string f() {
+    std::ostringstream oss;
+    oss << "thread " << std::this_thread::get_id();
+    return oss.str();
+}
+
+int main() {
+    std::cout << "main thread: " << std::this_thread::get_id() << std::endl;
+    auto f1 = std::async(f);
+    auto f2 = std::async(std::launch::async, f);
+    auto f3 = std::async(std::launch::deferred, f);
+    auto f4 = std::async(std::launch::async | std::launch::deferred, f);
+
+    std::cout << "f1 runs in " << f1.get() << std::endl;
+    std::cout << "f2 runs in " << f2.get() << std::endl;
+    std::cout << "f3 runs in " << f3.get() << std::endl;
+    std::cout << "f4 runs in " << f4.get() << std::endl;
+}
+```
+
+我在 Ubutun 上使用 GCC 9.4.0 编译后执行的结果如下：
+```
+main thread: 140454396094272
+f1 runs in thread 140454396090112
+f2 runs in thread 140454387697408
+f3 runs in thread 140454396094272
+f4 runs in thread 140454379304704
+```
+我在 Windows11 上使用 Mingw-w64 gcc 14.1.0 编译后执行的结果如下：
+```
+main thread: 1
+f1 runs in thread 2
+f2 runs in thread 3
+f3 runs in thread 1
+f4 runs in thread 4
+```
+可以看出，`policy` 设置为 `std::launch::deferred` 时指定的任务会推迟执行（并且跟主线程在一个线程中执行），而设置为其他值或不设置都会启动一个新线程去执行任务。
