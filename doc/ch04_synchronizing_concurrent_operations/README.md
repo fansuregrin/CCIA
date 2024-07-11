@@ -4,7 +4,7 @@
 
 # The Outline
 - [Waiting for an event or other condition](#等待事件或其他条件)
-    - Waiting for a condition with condition variables
+    - [Waiting for a condition with condition variables](#使用条件变量等待条件)
     - Building a thread-safe queue with condition variables
 - Waiting for one-off events with futures
     - Returning values from background tasks
@@ -52,3 +52,63 @@ void wait_for_flag() {
 
 **选择 3**：使用 C++ 标准库提供的**条件变量 (condition variables)**。从概念上讲，条件变量与事件或其他条件相关联，并且一个或多个线程可以等待该条件得到满足。当线程确定条件得到满足时，它可以通知一个或多个等待条件变量的线程，以唤醒它们并允许它们继续处理。
 
+### 使用条件变量等待条件
+C++ 标准库提供两种条件变量：`std::condition_variable` 和 `std::condition_variable_any`。它们都需要和 mutex 配套使用才能提供合适的同步功能：`std::condition_variable` 仅适用于 `std::unique_lock<std::mutex>`，目的是为了性能最大化；而 `std::condition_variable_any` 适用于所有满足 *BasicLockable* 要求的对象，更加灵活，同时开销也更大一些。
+
+一个使用条件变量的例子（具体代码请见 [listing 4.1](../../src/ch04_synchronizing_concurrent_operations/listing_4_1.cc)）：
+```cpp
+std::mutex mtx;
+std::queue<data_chunk> data_queue;  // 1
+std::condition_variable data_cond;
+
+void data_preparation_thread() {
+    while (more_data_to_prepare()) {
+        const data_chunk data = prepare_data();
+        {
+            std::lock_guard<std::mutex> lk(mtx);
+            data_queue.push(data);  // 2
+        }
+        // 这行代码在锁之外，当等待线程被通知唤醒后，不必再去等待锁。
+        // 如果将这行代码移动到锁的作用范围内，等待线程被通知唤醒后，还需要等待
+        // 这个线程这边释放锁
+        data_cond.notify_one();  // 3 通知一个等待线程
+    }
+}
+
+void data_processing_thread() {
+    while (true) {
+        std::unique_lock<std::mutex> lk(mtx);  // 4
+        // `wait()` 接受一个 `std::unique_lock` 类型参数 和 一个 `Predicate` 类型参数
+        // 这里提供的 `Predicate` 是一个 lambda funciton
+        //
+        // wait 会检查 `Predicate` 是否成立（lambda 函数返回 true）：
+        //   - 成立的话就返回
+        //   - 不成立的话就解锁 mutex，让线程阻塞
+        //
+        // 当被另一个线程通过 条件变量 通知后，此线程被唤醒
+        // 先尝试获取锁，接着检查条件是否成立：
+        //   - 获取不到锁，阻塞
+        //   - 获取了锁，条件也成立，就返回
+        //   - 获取了锁，条件不成立，解锁接着阻塞
+        data_cond.wait(lk, [] { return !data_queue.empty(); });  // 5
+        data_chunk data = data_queue.front();
+        data_queue.pop();
+        lk.unlock();  // 6
+        process(data);
+        if (is_last_chunk(data)) {
+            break;
+        }
+    }
+}
+```
+
+从根本上讲，`std::condition_variable::wait` 是对 *忙等待* 的优化。事实上，符合要求（尽管不太理想）的实现技术只是一个简单的循环：
+```cpp
+template <typename Predicate>
+void minimal_wait(std::unique_lock<std::mutex> &lk, Predicate pred) {
+    while (!pred()) {
+        lk.unlock();
+        lk.lock();
+    }
+}
+```
