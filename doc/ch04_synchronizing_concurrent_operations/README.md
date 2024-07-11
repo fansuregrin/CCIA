@@ -7,7 +7,7 @@
     - [Waiting for a condition with condition variables](#使用条件变量等待条件)
     - [Building a thread-safe queue with condition variables](#使用条件变量构建线程安全队列)
 - [Waiting for one-off events with futures](#使用-future-等待一次性事件)
-    - Returning values from background tasks
+    - [Returning values from background tasks](#从后台任务返回值)
     - Associating a task with a future
     - Making (std::)promises
     - Saving an exception for the future
@@ -178,3 +178,59 @@ template<> class shared_future<void>;         // (3) (since C++11)
 ```
 
 Concurrency TS 在 `std::experimental` 命名空间中提供了这些类模板的扩展版本： `std::experimental::future<>` 和 `std::experimental::shared_future<>`。它们的行为与 std 命名空间中的对应版本相同，但它们具有额外的成员函数来提供额外的功能。
+
+### 从后台任务返回值
+假设有一项耗时的计算任务，这个任务会返回一个期望的结果，但是现在并不着急需要这个结果。这种场景下，应该启动一个新线程来处理这项计算任务，等到结果就绪后或者主动需要结果时去获取这个结果。但是，`std::thread` 不能将结果传递给其他线程，这时候就需要 `std::async` 登场。
+
+使用 `std::async` 启动异步任务后，不需要立即获得结果。`std::async` 不会给出一个 `std::thread` 对象让你等待，而是返回一个 `std::future` 对象，该对象最终将保存函数的返回值。当你需要该值时，只需在 `future` 对象上调用 `get()`，线程就会阻塞，直到 `future` 准备就绪，然后返回该值。
+
+一个简单的使用 `std::async` 的例子（具体代码请见 [listing 4.6](../../src/ch04_synchronizing_concurrent_operations/listing_4_6.cc)）：
+```cpp
+int find_the_answer();
+void do_other_stuff();
+
+int main() {
+    // the type of `ans` is: `std::future<int>`
+    auto ans = std::async(find_the_answer);
+    do_other_stuff();
+    std::cout << "answer: " << ans.get() << std::endl;
+}
+```
+
+与 `std::thread` 的构造函数类似，可以给 `std::async` 传递任务函数（不一定是函数，也可以是可调用的对象）的参数：
+```cpp
+struct X {
+    void foo(int, const std::string &);
+    std::string bar(const std::string &);
+};
+X x;
+// 调用 p->foo(42, "hello")，这里的 p 是 &x
+auto f1 = std::async(&X::foo, &x, 42, "hello");
+// 调用 tmpx.bar("goodbye")，这里的 tmpx 是 x 的拷贝
+auto f2 = std::async(&X::bar, x, "goodbye");
+
+struct Y {
+    double operator()(double);
+};
+Y y;
+// 调用 tmpy(3.14)，这里的 tmpy 是从 Y() 移动构造的
+auto f3 = std::async(Y(), 3.141);
+// 调用 y(2.718)
+auto f4 = std::async(std::ref(y), 2.718);
+
+X baz(X &);
+// 调用 baz(x)
+std::async(baz, std::ref(x));
+
+class move_only {
+public:
+    move_only();
+    move_only(move_only&&)
+    move_only(move_only const&) = delete;
+    move_only& operator=(move_only&&);
+    move_only& operator=(move_only const&) = delete;
+    void operator()();
+};
+// 调用 tmp()，这里的 tmp 是从 std::move(move_only()) 构造的
+auto f5 = std::async(move_only());
+```
