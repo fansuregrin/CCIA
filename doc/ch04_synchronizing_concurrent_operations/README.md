@@ -6,7 +6,7 @@
 - [Waiting for an event or other condition](#等待事件或其他条件)
     - [Waiting for a condition with condition variables](#使用条件变量等待条件)
     - [Building a thread-safe queue with condition variables](#使用条件变量构建线程安全队列)
-- Waiting for one-off events with futures
+- [Waiting for one-off events with futures](#使用-future-等待一次性事件)
     - Returning values from background tasks
     - Associating a task with a future
     - Making (std::)promises
@@ -158,3 +158,23 @@ public:
 
 完整的实现代码请见 [listing 4.5](../../src/ch04_synchronizing_concurrent_operations/listing_4_5.hpp)。
 
+## 使用 `future` 等待一次性事件
+如果等待线程只等待一次，那么当条件为真时，它将永远不会再等待此条件变量，条件变量可能不是同步机制的最佳选择。如果等待的条件是特定数据的可用性，则尤其如此。在这种情况下，`future` 可能更合适。
+
+C++ 标准库使用一种称为 `future` 的东西来建模这种一次性事件。如果线程需要等待特定的一次性事件，它会以某种方式获取代表该事件的 `future`。然后，线程可以定期在短时间内等待 `future`，以查看事件是否已发生，同时在检查之间执行其他任务。或者，它可以执行另一项任务，直到需要事件发生后才能继续，然后只需等待 `future` 准备就绪即可。
+
+C++ 标准库提供两种 `future`s：`std::future<>` 和 `std::shared_future<>`。`std::future` 的实例是引用其关联事件的唯一实例，而 `std::shared_future` 的多个实例可能引用同一个事件。当事件发生后，`future` 实例准备就绪，可以通过它来获取与事件相关的数据。与事件相关的数据的类型也就是 `future` 的模板参数。在没有关联数据的地方应该使用 `std:future<void>` 和 `std::shared_future<void>` 模板特化。
+
+```cpp
+// defined in header <future>
+
+template< class T > class future;      // (1) (since C++11)
+template< class T > class future<T&>;  // (2) (since C++11)
+template<> class future<void>;         // (3) (since C++11)
+
+template< class T > class shared_future;      // (1) (since C++11)
+template< class T > class shared_future<T&>;  // (2) (since C++11)
+template<> class shared_future<void>;         // (3) (since C++11)
+```
+
+Concurrency TS 在 `std::experimental` 命名空间中提供了这些类模板的扩展版本： `std::experimental::future<>` 和 `std::experimental::shared_future<>`。它们的行为与 std 命名空间中的对应版本相同，但它们具有额外的成员函数来提供额外的功能。
