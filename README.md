@@ -4,7 +4,7 @@
 - [Hello, world of concurrency in C++!](./doc/ch01_hello_world/README.md)
 - [Managing threads](./doc/ch02_managing_threads/README.md)
 - [Sharing data between threads](./doc/ch03-sharing_data_between_threads/README.md)
-- Synchronizing concurrent operations
+- [Synchronizing concurrent operations](./doc/ch04_synchronizing_concurrent_operations/README.md)
 - The C++ memory model and operations on atomic types
 - Designing lock-based concurrent data structures
 - Designing lock-free concurrent data structures
