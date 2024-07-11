@@ -5,7 +5,7 @@
 # The Outline
 - [Waiting for an event or other condition](#等待事件或其他条件)
     - [Waiting for a condition with condition variables](#使用条件变量等待条件)
-    - Building a thread-safe queue with condition variables
+    - [Building a thread-safe queue with condition variables](#使用条件变量构建线程安全队列)
 - Waiting for one-off events with futures
     - Returning values from background tasks
     - Associating a task with a future
@@ -112,3 +112,49 @@ void minimal_wait(std::unique_lock<std::mutex> &lk, Predicate pred) {
     }
 }
 ```
+
+### 使用条件变量构建线程安全队列
+`std::queue` 的接口：
+```cpp
+template <class T, class Container = std::deque<T> >
+class queue {
+public:
+    explicit queue(const Container&);
+    explicit queue(Container&& = Container());
+    template <class Alloc> explicit queue(const Alloc&);
+    template <class Alloc> queue(const Container&, const Alloc&);
+    template <class Alloc> queue(Container&&, const Alloc&);
+    template <class Alloc> queue(queue&&, const Alloc&);
+    void swap(queue& q);
+    bool empty() const;
+    size_type size() const;
+    T& front();
+    const T& front() const;
+    T& back();
+    const T& back() const;
+    void push(const T& x);
+    void push(T&& x);
+    void pop();
+    template <class... Args> void emplace(Args&&... args);
+};
+```
+
+需要实现的 `threadsafe_queue` 的接口：
+```cpp
+template<typename T>
+class threadsafe_queue {
+public:
+    threadsafe_queue();
+    threadsafe_queue(const threadsafe_queue &);
+    threadsafe_queue& operator=(const threadsafe_queue &) = delete;
+    void push(T new_value);
+    bool try_pop(T& value);
+    std::shared_ptr<T> try_pop();
+    void wait_and_pop(T& value);
+    std::shared_ptr<T> wait_and_pop();
+    bool empty() const;
+}
+```
+
+完整的实现代码请见 [listing 4.5](../../src/ch04_synchronizing_concurrent_operations/listing_4_5.hpp)。
+
