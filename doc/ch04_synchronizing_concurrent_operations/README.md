@@ -13,7 +13,7 @@
     - [Saving an exception for the future](#为-future-保存异常)
     - [Waiting from multiple threads](#从多个线程等待)
 - [Waiting with a time limit](#有时间限制的等待)
-    - Clocks
+    - [Clocks](#时钟)
     - Durations
     - Time points
     - Functions that accept timeouts
@@ -489,3 +489,11 @@ auto sf = p.get_future().share();
 - 基于持续时间的超时（*duration-based* timeout）：等待一个指定的时间段（例如，等待 30 毫秒）
 - 绝对超时（*absolute* timeout）：等到特定的时间点（例如，等到 20:55:15.045987023 UTC on July 12, 2024）
 绝大多数等待函数都提供两种变体，处理基于持续时间的超时的函数通常以 `_for` 结尾，处理绝对超时的函数通常以 `_until` 结尾。
+
+### 时钟
+C++ 标准库认为时钟是时间信息的来源。确切地说，时钟是提供四种不同信息的类：
+- 当前时间
+- 用于表示从时钟获取的时间的值的类型
+- 时钟的滴答周期
+- 时钟是否以均匀的速率流逝，是的话就被认为是一个稳定的时钟
+
