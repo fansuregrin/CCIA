@@ -11,7 +11,7 @@
     - [Associating a task with a future](#将任务与-future-关联)
     - [Making (std::)promises](#做出承诺stdpromise)
     - [Saving an exception for the future](#为-future-保存异常)
-    - Waiting from multiple threads
+    - [Waiting from multiple threads](#从多个线程等待)
 - Waiting with a time limit
     - Clocks
     - Durations
@@ -441,3 +441,9 @@ some_promise.set_exception(std::make_exception_ptr(std::logic_error("foo")));
 ```
 
 还有一种存储异常的情况是在销毁 `std::promise` 对象 或 `std::packaged_task` 对象之前，没有在 `promise` 对象上调用 set 函数 (`set_value()` 或 `set_exception()` 等) 或者没有调用打包好的任务。具体的例子请见 [demo 4.2](../../src/ch04_synchronizing_concurrent_operations/demo_4_2.cc)。
+
+### 从多个线程等待
+如果从多个线程来访问单个 `std::future` 实例而不添加额外的同步，就会发生数据竞争和未定义的行为。原因是 `std::future` 对异步结果的所有权是独占的，`std::future::get()` 只能被调用一次，第一次调用才能获取异步结果，之后的调用都会产生未定义的行为。
+
+如果需要多个线程等待同一个事件，C++ 标准库提供 `std::shared_future`。与 `std::future` 只能移动不同，`std::shared_future` 是可复制的。多个 `std::shared_future` 对象可以引用同一个关联状态。
+
