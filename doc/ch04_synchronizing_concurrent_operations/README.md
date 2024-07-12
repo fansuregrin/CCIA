@@ -447,3 +447,30 @@ some_promise.set_exception(std::make_exception_ptr(std::logic_error("foo")));
 
 如果需要多个线程等待同一个事件，C++ 标准库提供 `std::shared_future`。与 `std::future` 只能移动不同，`std::shared_future` 是可复制的。多个 `std::shared_future` 对象可以引用同一个关联状态。
 
+首选的方法是将 `shared_future` 对象的副本传递给每个线程，这样每个线程都可以安全地访问自己的本地 `shared_future` 对象，因为内部现在已经由标准库正确同步。如果每个线程都通过自己的 `std::shared_future` 对象访问该状态，则从多个线程访问共享异步状态是安全的。
+
+![using multiple shared_future objects to avoid data races](../imgs/fig-4.1-using_multiple_shared_future_objects_to_avoid_data_races.png)
+
+引用某些异步状态的 `std::shared_future` 实例可以由引用该状态的 `std::future` 实例构造：
+```cpp
+std::promise<int> p;
+std::future<int> f(p.get_future());
+assert(f.valid()); // f 是 valid，因为 f 引用了 p 的异步状态
+std::shared_future<int> sf(std::move(f));  // 将 f 对异步状态的所有权转移给 sf
+assert(!f.valid()); // f 不再是 valid
+assert(sf.valid()); // sf 现在是 valid
+```
+
+像其他可移动的对象一样，对右值来说，所有权的转移是隐式发生的。所以，可以直接从 `get_future()` 的返回值构造 `std::shared_future` 对象：
+```cpp
+std::promise<std::string> p;
+std::shared_future<std::string> sf(p.get_future());
+```
+
+`std::future` 还提供一个成员函数 `share()`，它可以返回一个 `std::shared_future` 对象并转移所有权，配合 `auto` 就能自动推导 `std::shared_future` 的模板参数的类型了：
+```cpp
+// 这个 promise 的模板参数类型很长...
+std::promise<
+    std::map< SomeIndexType, SomeDataType, SomeComparator, SomeAllocator>::iterator> p;
+auto sf = p.get_future().share();
+```
