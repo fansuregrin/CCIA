@@ -300,6 +300,15 @@ f2 runs in thread 3
 f3 runs in thread 1
 f4 runs in thread 4
 ```
+
+我在 Windows11 上使用 Microsoft Visual C++ 19.40.33812 编译后的结果如下：
+```
+main thread: 19560
+f1 runs in thread 19584
+f2 runs in thread 19584
+f3 runs in thread 19560
+f4 runs in thread 19584
+```
 可以看出，`policy` 设置为 `std::launch::deferred` 时指定的任务会推迟执行（并且跟主线程在一个线程中执行），而设置为其他值或不设置都会启动一个新线程去执行任务。
 
 ### 将任务与 `future` 关联
