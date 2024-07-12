@@ -10,7 +10,7 @@
     - [Returning values from background tasks](#从后台任务返回值)
     - [Associating a task with a future](#将任务与-future-关联)
     - [Making (std::)promises](#做出承诺stdpromise)
-    - Saving an exception for the future
+    - [Saving an exception for the future](#为-future-保存异常)
     - Waiting from multiple threads
 - Waiting with a time limit
     - Clocks
@@ -406,3 +406,38 @@ void process_connections(connection_set &connections) {
     }
 }
 ```
+
+### 为 `future` 保存异常
+如果 `std::async` 调用的函数抛出了异常，则该异常将存储在 `future` 引用的共享状态中以代替存储结果，然后 `future` 准备就绪，在 `future` 上调用 `get()` 将重新抛出该存储的异常。
+
+```cpp
+double square_root(doble x) {
+    if (x < 0) {
+        throw std::out_of_range("x < 0");
+    }
+    return sqrt(x);
+}
+
+std::future<double> f = std::async(square_root, -1);
+double y = f.get(); // 重新抛出异常
+```
+
+同样，将一个函数包装在 `std::packaged_task` 中，若调用函数时抛出了异常，异常也会存储在 `std::future` 所引用的共享状态中，在 `std::future` 上调用 `get()` 时重新抛出存储的异常。
+
+`std::promise` 也提供了同样的设施 —— `set_exception()` 来设置异常：
+```cpp
+extern std::promise<double> some_promise;
+try {
+    // 尝试设置值为 calculate_value() 返回的结果
+    some_promise.set_value(calculate_value());
+} catch (...) {
+    // 如果 calculate_value() 抛出了异常
+    // 通过 set_exception 来设置异常
+    some_promise.set_exception(std::current_exception());
+}
+
+// 异常类型已知，直接设置某种异常
+some_promise.set_exception(std::make_exception_ptr(std::logic_error("foo")));
+```
+
+还有一种存储异常的情况是在销毁 `std::promise` 对象 或 `std::packaged_task` 对象之前，没有在 `promise` 对象上调用 set 函数 (`set_value()` 或 `set_exception()` 等) 或者没有调用打包好的任务。具体的例子请见 [demo 4.2](../../src/ch04_synchronizing_concurrent_operations/demo_4_2.cc)。
