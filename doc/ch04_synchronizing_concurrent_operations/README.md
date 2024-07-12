@@ -8,7 +8,7 @@
     - [Building a thread-safe queue with condition variables](#使用条件变量构建线程安全队列)
 - [Waiting for one-off events with futures](#使用-future-等待一次性事件)
     - [Returning values from background tasks](#从后台任务返回值)
-    - Associating a task with a future
+    - [Associating a task with a future](#将任务与-future-关联)
     - Making (std::)promises
     - Saving an exception for the future
     - Waiting from multiple threads
@@ -301,3 +301,75 @@ f3 runs in thread 1
 f4 runs in thread 4
 ```
 可以看出，`policy` 设置为 `std::launch::deferred` 时指定的任务会推迟执行（并且跟主线程在一个线程中执行），而设置为其他值或不设置都会启动一个新线程去执行任务。
+
+### 将任务与 `future` 关联
+`std::packaged_task<>` 将 `future` 与函数或可调用对象绑定。当调用 `std::packaged_task<>` 对象时，它会调用关联的函数或可调用对象并使 `future` 准备就绪，并将返回值存储为关联数据。
+
+`std::packaged_task<>` 的模板声明和构造函数如下所示：
+```cpp
+template< class R, class ...ArgTypes >
+class packaged_task<R(ArgTypes...)>;
+
+template< class F >
+explicit packaged_task( F&& f );
+```
+它的模板参数是一个函数签名，当构造 `std::packaged_task` 的实例时，必须传入一个可以接受指定参数并返回可转换为指定返回类型的函数或可调用对象。类型并不需要精准匹配，因为可以隐式转换类型。例如：可以从一个接受 `int` 类型参数返回 `float` 类型的函数来构造一个 `std::packaged_task<double(double)>` 实例。
+
+函数签名的返回类型标识从 `get_future()` 成员函数返回的 `std::future<>` 的类型，而函数签名的参数列表用于指定打包任务的函数调用操作符的签名。
+```cpp
+// Getting the result
+std::future<R> get_future();
+// Execution
+void operator()( ArgTypes... args );
+```
+
+例如，我们可以写一个 `std::packaged_task` 的特化：
+```cpp
+// Listing 4.8 Partial class definition for a specialization of std::packaged_task< >
+template <>
+class packaged_task<std::string(std::vector<char> *, int)> {
+public:
+    template <typename Callable>
+    explicit packaged_task(Callable &&f);
+
+    std::future<std::string> get_future();
+
+    void operator()(std::vector<char> *, int);
+};
+```
+
+`std::packaged_task` 实例是一个可调用的对象，它可以被包装在一个 `std::function` 对象中，然后传递给 `std::thread` 作为线程函数，或者传递给另一个需要一个可调用对象的函数，或者直接被调用。当 `std::packaged_task` 作为函数对象调用时，传递给函数调用操作符的参数将传递给包含的函数，并且返回值作为异步结果存储在从 `get_future()` 获得的 `std::future` 中。
+
+#### 在线程之间传递任务
+```cpp
+// Listing 4.9 Running code on a GUI thread using std::packaged_task
+std::mutex m;
+std::deque<std::packaged_task<void()>> tasks;
+bool gui_shutdown_message_received();
+void get_and_process_message();
+
+void gui_thread() { // 1
+    while (!gui_shutdown_message_received()) { // 2
+        get_and_process_message(); // 3
+        std::packaged_task<void()> task;
+        {
+            std::lock_guard<std::mutex> lk(m);
+            if (tasks.empty()) { continue; } // 4
+            task = std::move(tasks.front()); // 5 从队列中取出任务
+            tasks.pop_front();
+        }
+        task(); // 6 执行任务
+    }
+}
+
+template <typename Func>
+std::future<void> post_task_for_gui_thread(Func f) {
+    std::packaged_task<void()> task(f); // 7 创建任务
+    std::future<void> res = task.get_future(); // 8 获取与任务相关的 future
+    std::lock_guard<std::mutex> lk(m);
+    tasks.push_back(std::move(task)); // 9 把任务放进队列
+    return res; // 10 将 future 返回给发布任务者
+}
+
+std::thread gui_bg_thread(gui_thread);
+```
