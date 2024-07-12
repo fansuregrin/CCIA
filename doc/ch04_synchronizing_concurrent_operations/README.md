@@ -12,7 +12,7 @@
     - [Making (std::)promises](#做出承诺stdpromise)
     - [Saving an exception for the future](#为-future-保存异常)
     - [Waiting from multiple threads](#从多个线程等待)
-- Waiting with a time limit
+- [Waiting with a time limit](#有时间限制的等待)
     - Clocks
     - Durations
     - Time points
@@ -483,3 +483,9 @@ std::promise<
     std::map< SomeIndexType, SomeDataType, SomeComparator, SomeAllocator>::iterator> p;
 auto sf = p.get_future().share();
 ```
+
+## 有时间限制的等待
+前面介绍的阻塞调用都会等待一段不确定的时间（直到等待的事件就绪为止），其实，C++ 标准库还提供有时间限制的等待。标准库提供了两类超时 (timeout)：
+- 基于持续时间的超时（*duration-based* timeout）：等待一个指定的时间段（例如，等待 30 毫秒）
+- 绝对超时（*absolute* timeout）：等到特定的时间点（例如，等到 20:55:15.045987023 UTC on July 12, 2024）
+绝大多数等待函数都提供两种变体，处理基于持续时间的超时的函数通常以 `_for` 结尾，处理绝对超时的函数通常以 `_until` 结尾。
