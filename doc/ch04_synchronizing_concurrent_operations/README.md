@@ -9,7 +9,7 @@
 - [Waiting for one-off events with futures](#使用-future-等待一次性事件)
     - [Returning values from background tasks](#从后台任务返回值)
     - [Associating a task with a future](#将任务与-future-关联)
-    - Making (std::)promises
+    - [Making (std::)promises](#做出承诺stdpromise)
     - Saving an exception for the future
     - Waiting from multiple threads
 - Waiting with a time limit
@@ -372,4 +372,37 @@ std::future<void> post_task_for_gui_thread(Func f) {
 }
 
 std::thread gui_bg_thread(gui_thread);
+```
+
+### 做出承诺(std::promise)
+`std::promise<T>` 提供了一种设置值（类型 `T`）的方法，该值稍后可以通过关联的 `std::future<T>` 对象读取。`std::promise/std::future` 对将为此功能提供一种可能的机制；等待线程可以在 `future` 上阻塞，而提供数据的线程可以使用与之配对的 `promise` 来设置关联值并使 `future` 准备就绪。
+
+下面是一个处理网络连接的例子：数据包将从各个连接到来，并按照随机顺序进行处理，同样，数据包也会排队按随机顺序发送。
+```cpp
+// Listing 4.10 Handling multiple connections from a single thread using promises
+void process_connections(connection_set &connections) {
+    while (!done(connections)) { // 1 当 done() 返回 true 时结束循环
+        for (
+        connection_iterator connection = connections.begin(),
+        end = connections.end(); connection != end; ++connection) {
+            if (connection->has_incoming_data()) { // 3 检查是否有到来的数据
+                // 获取到来的数据包
+                data_packet data = connection->incoming();
+                // 到来的包里面有 id 和 payload
+                // id 会映射一个 promise
+                std::promise<payload_type> &p = connection->get_promise(data.id);
+                // 将 promise 的值设为包携带的 payload
+                p.set_value(data.payload); // 4
+            }
+            if (connection->has_outgoing_data()) { // 5 检查是否有往外发送的数据
+                // 获取往外发送的数据包
+                outgoing_packet data = connection->top_of_outgoing_queue();
+                // 发送数据包
+                connection->send(data.payload);
+                // 发送完成后，将与这个数据包相关的 promise 的值设为 true
+                data.promise.set_value(true); // 6
+            }
+        }
+    }
+}
 ```
