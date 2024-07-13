@@ -14,7 +14,7 @@
     - [Waiting from multiple threads](#从多个线程等待)
 - [Waiting with a time limit](#有时间限制的等待)
     - [Clocks](#时钟)
-    - Durations
+    - [Durations](#持续时间)
     - Time points
     - Functions that accept timeouts
 - Using synchronization of operations to simplify code
@@ -503,3 +503,58 @@ C++ 11 标准库定义了 3 个时钟类：
 - `system_clock`：系统范围的实时时钟
 - `steady_clock`：永远不会被调整的单调时钟
 - `high_resolution_clock`：具有最短可用滴答周期的时钟
+
+### 持续时间
+C++ 用类模板 `std::chrono::duration` 来代表一段持续时间：
+```cpp
+template<
+    class Rep,
+    class Period = std::ratio<1>
+> class duration;
+```
+第一个模板参数称为 representation（类型可以是 `short`、`int`、`double` 等），它表示滴答的数量；第二个模板参数称为 period，它表示一个滴答周期（单位为秒）。例如，想要 `int` 类型来存储多少分钟，可以定义类型：`std::chrono::duration<int, std::ratio<60,1>>`；因为一分钟有 60 秒。C++ 标准库已经预定义了常用的时间单位：
+| 类型 | 定义 |
+| :-: | :-: |
+| `std::chrono::nanoseconds`	      | `std::chrono::duration</* int64 */, std::nano>`           |
+| `std::chrono::microseconds`	      | `std::chrono::duration</* int55 */, std::micro>`          |
+| `std::chrono::milliseconds`	      | `std::chrono::duration</* int45 */, std::milli>`          |
+| `std::chrono::seconds`	          | `std::chrono::duration</* int35 */>`                      |
+| `std::chrono::minutes`	          | `std::chrono::duration</* int29 */, std::ratio<60>>`      |
+| `std::chrono::hours`                | `std::chrono::duration</* int23 */, std::ratio<3600>>`    |
+| `std::chrono::days (since C++20)`   | `std::chrono::duration</* int25 */, std::ratio<86400>>`   |
+| `std::chrono::weeks (since C++20)`  | `std::chrono::duration</* int22 */, std::ratio<604800>>`  |
+| `std::chrono::months (since C++20)` | `std::chrono::duration</* int20 */, std::ratio<2629746>>` |
+| `std::chrono::years (since C++20)`  | `std::chrono::duration</* int17 */, std::ratio<31556952>>`|
+
+为方便起见，`std::chrono_literals` 命名空间中预定义了一些用于持续时间的字面量后缀操作符（literal suffix operator）。这些操作符在 C++14 中引入，可以简化代码。
+- `operator""h` (C++14): a `std::chrono::duration` literal representing hours (function)
+- `operator""min` (C++14): a `std::chrono::duration` literal representing minutes (function)
+- `operator""s` (C++14): a `std::chrono::duration` literal representing seconds (function)
+- `operator""ms` (C++14): a `std::chrono::duration` literal representing milliseconds (function)
+- `operator""us` (C++14): a `std::chrono::duration` literal representing microseconds (function)
+- `operator""ns` (C++14): a `std::chrono::duration` literal representing nanoseconds (function)
+
+使用示例：
+```cpp
+using namespace std::chrono_literals;
+auto one_day = 24h;
+auto half_an_hour = 30min;
+auto max_time_between_messages = 30ms;
+```
+
+持续时间之间的转换是隐式的，不需要截断值（也就是说可以从分钟转换到秒，不能从秒转换到分钟），具体例子请见 [demo 4.3](../../src/ch04_synchronizing_concurrent_operations/demo_4_3.cc)。当不能隐式转换时，可以使用 `std::chrono::duration_cast` 来进行显式转换：
+```cpp
+std::chrono::milliseconds ms(54802);
+std::chrono::seconds s = std::chrono::duration_cast<std::chrono::seconds>(ms);
+```
+`std::chrono::duration` 还支持算术运算。
+
+基于持续时间的等待是通过 `std::chrono::duration<>` 的实例完成的。例如，可以等待最多 35 毫秒以等待 `future` 准备就绪：
+```cpp
+std::future<int> f = std::async(some_task);
+if (f.wait_for(std::chrono::milliseconds(35)) == std::future_status::ready) {
+    do_something_with(f.get());
+}
+```
+
+这里的等待函数会返回状态，表示超时（`future_status::timeout`）、就绪（`future_status::ready`）或者任务被推迟（`future_status::deferred`）。基于持续时间的等待，所用的时钟是内部的稳定时钟。
