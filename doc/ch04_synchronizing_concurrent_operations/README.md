@@ -18,7 +18,7 @@
     - [Time points](#时间点)
     - [Functions that accept timeouts](#接受超时的函数)
 - [Using synchronization of operations to simplify code](#使用操作的同步来简化代码)
-    - Functional programming with futures
+    - [Functional programming with futures](#使用-future-进行函数式编程)
     - Synchronizing operations with message passing
     - Continuation-style concurrency with the Concurrency TS
     - Chaining continuations
@@ -620,3 +620,84 @@ bool wait_loop() {
 
 ## 使用操作的同步来简化代码
 使用本章前几节描述的同步设施作为构建块，可以让程序员专注于需要同步的操作而不是机制。这有助于简化代码，并支持一种更加功能化（在函数式编程的意义上）的并发编程。不是直接在线程之间共享数据，而是可以为每个任务提供所需的数据，然后通过使用 `future` 将结果传播给任何其他需要它的线程。
+
+### 使用 `future` 进行函数式编程
+[*函数式编程 (functional programming, FP)*](https://en.wikipedia.org/wiki/Functional_programming) 指的是一种编程风格，其中函数调用的结果仅取决于该函数的参数，而不依赖于任何外部状态。也就是说，当用同样的参数调用一个函数两次，得到的结果是确切相同的。*[纯函数 (pure function)](https://en.wikipedia.org/wiki/Pure_function)* 也不会修改任何外部状态；函数的效果完全限于返回值。这使得事情变得容易起来，特别是在并发的情况下，因为许多与共享数据相关的问题消失了。如果共享数据没有被修改，就不会出现竞争条件，因此也不需要用互斥锁来保护共享数据。
+
+#### 函数式编程风格的快速排序
+快速排序的流程：
+![FP-style recursive sorting](../imgs/fig-4.2-FP-style_recursive_sorting.png)
+
+串行快速排序示例代码（具体代码请见 [listing 4.12](../../src/ch04_synchronizing_concurrent_operations/listing_4_12.cc)）：
+```cpp
+// Listing 4.12 A sequential implementation of Quicksort
+template <typename T>
+std::list<T> sequential_quicksort(std::list<T> input) {
+    if (input.empty()) {
+        return input;
+    }
+    std::list<T> result; // 创建一个空的 list 存储排序后的结果
+    // 选取 input 的第一个元素作为枢轴元素，移动到 result 的开头
+    result.splice(result.begin(), input, input.begin()); // 1
+    // 引用枢轴元素
+    const T &pivot = *result.begin();            // 2
+    // 将 input 中 小于枢轴元素的所有元素 重新排到 大于或等于枢轴元素的所有元素 的前面
+    // 返回值是指向第一个不小于枢轴元素的迭代器
+    auto divide_point = std::partition(input.begin(), input.end(),
+                                       [&](const T &t) { return t < pivot; }); // 3
+    std::list<T> lower_part; // 创建一个空的 list 存储小于枢轴元素的所有元素
+    // 将 input 中小于枢轴元素的所有元素移动到 lower_part 中（从 lower_part 的后面开始添加）
+    // 完成后，input 中只剩下大于或等于枢轴元素的元素了
+    lower_part.splice(lower_part.end(), input, input.begin(), divide_point); // 4
+    // 将小于枢轴的所有元素排序
+    auto new_lower(sequential_quicksort(std::move(lower_part))); // 5
+    // 将大于或等于枢轴的所有元素排序
+    auto new_higher(sequential_quicksort(std::move(input))); // 6
+    // 将已经有序的所有大于或等于枢轴的元素移动到 result 中（从 result 的后面开始添加）
+    result.splice(result.end(), new_higher); // 7
+    // 将已经有序的所有小于枢轴的元素移动到 result 中（从 result 的前面开始添加）
+    result.splice(result.begin(), new_lower); // 8
+    // 最后 result 保存了 input 的有序结果
+    return result;
+}
+```
+
+#### 函数式编程风格的并行快速排序
+串行快速排序示例代码（具体代码请见 [listing 4.13](../../src/ch04_synchronizing_concurrent_operations/listing_4_13.cc)）：
+```cpp
+template <typename T>
+std::list<T> parallel_quicksort(std::list<T> input) {
+    if (input.empty()) {
+        return input;
+    }
+    std::list<T> result;
+    result.splice(result.begin(), input, input.begin());
+    const T &pivot = *result.begin();
+    auto divide_point = std::partition(input.begin(), input.end(),
+                                       [&](const T &t) { return t < pivot; });
+    std::list<T> lower_part;
+    lower_part.splice(lower_part.end(), input, input.begin(), divide_point);
+    std::future<std::list<T>> new_lower(
+        std::async(&parallel_quicksort<T>, std::move(lower_part))
+    ); // 1
+    auto new_higher(parallel_quicksort(std::move(input))); // 2
+    result.splice(result.end(), new_higher); // 3
+    result.splice(result.begin(), new_lower.get()); // 4
+    return result;
+}
+```
+
+除了使用 `std::async()`，你还可以编写自己的 `spawn_task()` 函数作为 `std::packaged_task` 和 `std::thread` 的简单包装器，如清单 4.14 所示；你可以为函数调用的结果创建一个 `std::packaged_task`，从中获取 `future`，在线程上运行它，并返回 `future`。
+
+```cpp
+// Listing 4.14 A sample implementation of spawn_task
+template <typename F, typename A>
+std::future<std::result_of<F(A &&)>::type> spwan_task(F &&f, A &&a) {
+    typedef std::result_of<F(A &&)>::type result_type;
+    std::packaged_task<result_type(A &&)> task(std::move(f));
+    std::future<result_type> res(task.get_future());
+    std::thread t(std::move(f), std::move(a));
+    t.detach();
+    return res;
+}
+```
