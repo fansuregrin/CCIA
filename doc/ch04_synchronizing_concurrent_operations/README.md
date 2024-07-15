@@ -15,7 +15,7 @@
 - [Waiting with a time limit](#有时间限制的等待)
     - [Clocks](#时钟)
     - [Durations](#持续时间)
-    - Time points
+    - [Time points](#时间点)
     - Functions that accept timeouts
 - Using synchronization of operations to simplify code
     - Functional programming with futures
@@ -558,3 +558,51 @@ if (f.wait_for(std::chrono::milliseconds(35)) == std::future_status::ready) {
 ```
 
 这里的等待函数会返回状态，表示超时（`future_status::timeout`）、就绪（`future_status::ready`）或者任务被推迟（`future_status::deferred`）。基于持续时间的等待，所用的时钟是内部的稳定时钟。
+
+### 时间点
+时钟的时间点由 `std::chrono::time_point<>` 类模板的实例表示，该实例指定它所引用的时钟作为第一个模板参数，并指定测量单位（`std::chrono::duration<>` 的特化）作为第二个模板参数。
+```cpp
+template<
+    class Clock,
+    class Duration = typename Clock::duration
+> class time_point;
+```
+时间点的值是自某个特定时间点（称为时钟纪元）以来的时间长度（以指定持续时间的倍数表示）。C++ 标准库并没有规定时钟纪元是什么时候，但是可以在 `time_point` 上调用 `time_since_epoch()` 函数来获取时钟从纪元到这个时间点的持续时间。
+```cpp
+auto tm1 = std::chrono::system_clock::now();
+#if __cplusplus >= 202002L
+std::cout << tm1.time_since_epoch() << std::endl;
+#endif
+```
+
+可以从一个时间点加上或减去一个持续时间得到一个新的时间点；也可以将两个使用同一时钟的时间点相减得到一个持续时间（具体代码请见 [demo 4.4](../../src/ch04_synchronizing_concurrent_operations/demo_4_4.cc)）：
+```cpp
+auto tm1 = std::chrono::system_clock::now();
+auto tm2 = tm1 + std::chrono::seconds(10);
+auto tm3 = tm1 - std::chrono::minutes(2);
+auto d1 = tm1 - tm3;
+```
+
+时间点与等待函数的 `_until` 变体一起使用。例如，如果你最多需要等待 500 毫秒才能等待与条件变量关联的事件，那么你可以执行以下清单中的操作：
+```cpp
+// Listing 4.11 Waiting for a condition variable with a timeout
+#include <condition_variable>
+#include <mutex>
+#include <chrono>
+
+std::condition_variable cv;
+bool done;
+std::mutex m;
+
+bool wait_loop() {
+    auto const timeout= std::chrono::steady_clock::now() +
+        std::chrono::milliseconds(500);
+    std::unique_lock<std::mutex> lk(m);
+    while (!done) {
+        if (cv.wait_until(lk,timeout) == std::cv_status::timeout) {
+            break;
+        }
+    }
+    return done;
+}
+```
