@@ -17,7 +17,7 @@
     - [Durations](#持续时间)
     - [Time points](#时间点)
     - [Functions that accept timeouts](#接受超时的函数)
-- Using synchronization of operations to simplify code
+- [Using synchronization of operations to simplify code](#使用操作的同步来简化代码)
     - Functional programming with futures
     - Synchronizing operations with message passing
     - Continuation-style concurrency with the Concurrency TS
@@ -617,3 +617,6 @@ bool wait_loop() {
 | `std::unique_lock<Mutex>`(`Mutex` meets the *TimedLockable* requirements) | `try_lock_for(duration)` <br> `try_lock_until(time_point)` | 如果成功获取互斥锁所有权则为 `true`，否则为 `false` |
 | `std::shared_lock<Mutex>`(`Mutex` meets the *SharedTimedLockable* requirements) | `try_lock_for(duration)` <br> `try_lock_until(time_point)` | 如果成功获取共享锁所有权则为 `true`，否则为 `false` |
 | `std::future` or `std::shared_future` | `wait_for(duration)` <br> `wait_until(time_point)` | `std::future_status::ready` 结果就绪 <br> `std::future_status::timeout` 超时 <br> `std::future_status::deferred` 共享状态中包含了惰性求值推迟函数，因此结果仅在明确要求时才会被计算 |
+
+## 使用操作的同步来简化代码
+使用本章前几节描述的同步设施作为构建块，可以让程序员专注于需要同步的操作而不是机制。这有助于简化代码，并支持一种更加功能化（在函数式编程的意义上）的并发编程。不是直接在线程之间共享数据，而是可以为每个任务提供所需的数据，然后通过使用 `future` 将结果传播给任何其他需要它的线程。
