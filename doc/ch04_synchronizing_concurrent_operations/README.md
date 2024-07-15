@@ -16,7 +16,7 @@
     - [Clocks](#时钟)
     - [Durations](#持续时间)
     - [Time points](#时间点)
-    - Functions that accept timeouts
+    - [Functions that accept timeouts](#接受超时的函数)
 - Using synchronization of operations to simplify code
     - Functional programming with futures
     - Synchronizing operations with message passing
@@ -606,3 +606,14 @@ bool wait_loop() {
     return done;
 }
 ```
+
+### 接受超时的函数
+| 类/命名空间 | 函数 | 返回值 |
+| :-: | :-: | :-: |
+| `std::this_thread` namespace | `sleep_for(duration)` <br> `sleep_until(time_point)` | N/A |
+| `std::condition_variable` 或 `std::condition_variable_any` | `wait_for(lock, duration)` <br> `wait_for(lock, duration, predicate)` <br> `wait_until(lock, time_point)` <br> `wait_until(lock, time_point, predicate)` | `std::cv_status::timeout` 或 `std::cv_status::no_timeout` |
+| `std::timed_mutex`, `std::recursive_timed_mutex` 或 `std::shared_timed_mutex` | `try_lock_for(duration)` <br> `try_lock_until(time_point)` | 成功获取锁返回 `true`，否则返回 `false` |
+| `std::shared_timed_mutex` | `try_lock_shared_for(duration)` <br> `try_lock_shared_until(time_point)` | 如果成功获取共享锁所有权则为 `true`，否则为 `false` |
+| `std::unique_lock<Mutex>`(`Mutex` meets the *TimedLockable* requirements) | `try_lock_for(duration)` <br> `try_lock_until(time_point)` | 如果成功获取互斥锁所有权则为 `true`，否则为 `false` |
+| `std::shared_lock<Mutex>`(`Mutex` meets the *SharedTimedLockable* requirements) | `try_lock_for(duration)` <br> `try_lock_until(time_point)` | 如果成功获取共享锁所有权则为 `true`，否则为 `false` |
+| `std::future` or `std::shared_future` | `wait_for(duration)` <br> `wait_until(time_point)` | `std::future_status::ready` 结果就绪 <br> `std::future_status::timeout` 超时 <br> `std::future_status::deferred` 共享状态中包含了惰性求值推迟函数，因此结果仅在明确要求时才会被计算 |
