@@ -20,7 +20,7 @@
 - [Using synchronization of operations to simplify code](#使用操作的同步来简化代码)
     - [Functional programming with futures](#使用-future-进行函数式编程)
     - [Synchronizing operations with message passing](#通过消息传递来同步操作)
-    - Continuation-style concurrency with the Concurrency TS
+    - [Continuation-style concurrency with the Concurrency TS](#使用并发-ts-实现延续式并发)
     - Chaining continuations
     - Waiting for more than one future
     - Waiting for the first future in a set with when_any
@@ -792,3 +792,39 @@ void atm::getting_pin() {
 ```
 
 如你所见，这种编程风格可以大大简化设计并发系统的任务，因为每个线程都可以完全独立处理。这是一个使用多个线程来分离关注点的示例，因此需要明确决定如何在线程之间划分任务。
+
+### 使用并发 TS 实现延续式并发
+Concurrency TS 在 `std::experimental` 命名空间中提供了 `std::promise` 和 `std::packaged_task` 的新版本，它们都与 std 原始版本有一点不同：它们返回 `std::experimental::future` 的实例，而不是 `std::future`。这使用户能够利用 `std::experimental::future` 中的关键新功能 —— *延续（continuation）*。
+
+延续的意思是：当数据就绪，然后就能进行处理。将延续添加到 `future` 的成员函数称为 `then()`。给定一个 `future`: `fut`，使用调用 `fut.then(continuation)` 添加延续。就像 `std::future` 一样，`std::experimental::future` 只允许检索一次存储的值。如果该值正在被延续使用，则意味着其他代码无法访问它。因此，当使用 `fut.then()` 添加延续时，原始 future `fut` 将变为无效。相反，对 `fut.then()` 的调用将返回一个新的 future 来保存延续调用的结果。
+```cpp
+std::experimental::future<int> find_the_answer();
+auto fut = find_the_answer();
+auto fut2 = fut.then(find_the_question);
+assert(!fut.valid());
+assert(fut2.valid());
+```
+
+我们不能将参数传递给延续函数，因为参数已经由库定义了 - 延续传递了一个已准备好的 `future`，其中包含触发延续的结果。上面例子中的 `find_the_question` 函数只能接收类型为 `std::experimental::future<int>` 的单个参数。
+
+可以通过并发 TS 来实现 `std::async`。使用 `std::experimental::promise` 来获取 `future`，然后生成一个运行 lambda 的新线程，将 `promise` 的值设置为所提供函数的返回值：
+```cpp
+// Listing 4.17 A simple equivalent to std::async for Concurrency TS futures
+template <typename Func>
+std::experimental::future<decltype(std::declval<Func>()())>
+spawn_async(Func &&func) {
+    std::experimental::promise<decltype(std::declval<Func>()())> p;
+    auto res = p.get_future();
+    std::thread t(
+        [p = std::move(p), f = std::decay_t<Func>(func)] () mutable {
+            try {
+                p.set_value_at_thread_exit(f());
+            } catch (...) {
+                p.set_exception_at_thread_exit(std::current_exception());
+            }
+        }
+    );
+    t.detach();
+    return res;
+}
+```
