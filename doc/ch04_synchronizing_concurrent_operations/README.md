@@ -19,7 +19,7 @@
     - [Functions that accept timeouts](#接受超时的函数)
 - [Using synchronization of operations to simplify code](#使用操作的同步来简化代码)
     - [Functional programming with futures](#使用-future-进行函数式编程)
-    - Synchronizing operations with message passing
+    - [Synchronizing operations with message passing](#通过消息传递来同步操作)
     - Continuation-style concurrency with the Concurrency TS
     - Chaining continuations
     - Waiting for more than one future
@@ -701,3 +701,94 @@ std::future<std::result_of<F(A &&)>::type> spwan_task(F &&f, A &&a) {
     return res;
 }
 ```
+
+### 通过消息传递来同步操作
+除了函数式编程这种范式外，另一个并发编程范式是通信顺序进程 (communicating sequential processes, CSP)。在 CSP 这种范式下：线程在概念上是完全独立的，没有共享数据，但允许有通信通道在它们之间传递消息。每个线程都可以完全独立地推理，完全基于它对收到的消息做出的响应。因此，每个线程实际上都是一个状态机（state machine）：当它收到一条消息时，它会以某种方式更新其状态，并可能向其他线程发送一条或多条消息，处理过程取决于初始状态。编写此类线程的一种方法是将其形式化并实现 *有限状态机*（[finite state machine](https://en.wikipedia.org/wiki/Finite-state_machine)）模型，但这不是唯一的方法；状态机可以隐式存在于应用程序的结构中。
+
+真正的通信顺序进程没有共享数据，所有通信都通过消息队列传递，但由于 C++ 线程共享地址空间，因此无法强制执行此要求。程序员有责任确保线程之间不共享数据。当然，线程之间必须共享消息队列才能进行通信，但细节可以封装在库中。
+
+看一个实现 ATM 系统的例子：一个 ATM 系统需要处理与用户的交互、与银行的交互、以及控制物理器件接收卡片、显示信息、处理按键、吐出钱币、退回卡片等操作。一种方式是将这个系统分割成三个独立的线程：处理物理器件的线程、处理 ATM 逻辑的线程和与银行通信的线程；这些线程仅仅通过传递消息来沟通，而不共享数据。然后，对这个系统建立状态机模型。
+
+ATM 逻辑部分的状态机模型如下图所示：
+![state-machine-for-an-ATM](../imgs/fig-4.3-a_simple_state_machine_for_an_ATM.png)
+
+可以用一个类来实现 ATM 逻辑部分的状态机，用成员函数来表示每一个状态。每一个成员函数等待接收一个特定的消息集合，当消息到来时进行处理；根据到来的消息，可能会转到另一个状态。每一个消息的类型用一个单独的 `struct` 来表示。下面是一个简单的代码实现：
+```cpp
+// Listing 4.15 A simple implementation of an ATM logic class
+struct card_inserted {
+    std::string account;
+};
+
+class atm {
+    messaging::receiver incoming;
+    messaging::sender bank;
+    messaging::sender interface_hardware;
+    void (atm::*state)(); // 成员函数指针
+    std::string account;
+    std::string pin;
+
+    void waiting_for_card() { // 1 "waiting for card" 状态函数
+        // 发送 “显示等待接收卡片” 的消息给硬件接口（即物理器件接口）
+        interface_hardware.send(display_enter_card()); // 2
+        incoming.wait() // 3 等待消息到来
+            .handle<card_inserted>(
+                [&] (const card_inserted &msg) { // 4 这个状态下只有这一种消息需要处理
+                    account = msg.account; // 获取账号
+                    pin = ""; // 将 pin 清空
+                    // 发送 “显示等待pin” 的消息给硬件接口
+                    interface_hardware.send(display_enter_pin());
+                    // 转到下一个状态
+                    state = &atm::getting_pin;
+                }
+            )
+    }
+
+    void getting_pin();
+public:
+    void run() { // 5 从这里开始执行
+        state = &atm::waiting_for_card(); // 6 将初始状态设为 "waiting for card"
+        try {
+            // 反复执行表示当前状态的成员函数
+            for (;;) {
+                (this->*state)(); // 7
+            }
+        } catch (const messaging::close_queue &e) {
+            // ...
+        }
+    }
+};
+```
+
+通过上面的代码可以看出，我们无需考虑同步和并发问题，只需考虑在任意给定点可以接收哪些消息以及发送哪些消息。此 ATM 逻辑的状态机在单个线程上运行，而系统的其他部分（例如银行接口和终端接口）则在单独的线程上运行。这种程序设计风格称为 [Actor 模型](https://en.wikipedia.org/wiki/Actor_model) - 系统中有多个离散的参与者（每个参与者都在单独的线程上运行），它们互相发送消息来执行手头的任务，除了直接通过消息传递的状态外，没有共享状态。
+
+`getting_pin()` 状态函数的实现代码：
+```cpp
+// Listing 4.16 The getting_pin state function for the simple ATM implementation
+void atm::getting_pin() {
+    incoming.wait()
+        .handle<digit_pressed>( // 1
+            [&] (const digit_pressed &msg) {
+                const unsigned pin_length = 6;
+                pin += msg.digit;
+                if (pin.length() == pin_length) {
+                    bank.send(verify_pin(account, pin, incoming));
+                    state = &atm::verifying_pin;
+                }
+            }
+        )
+        .handle<clear_last_pressed>( // 2
+            [&] (const clear_last_pressed &msg) {
+                if (!pin.empty()) {
+                    pin.resize(pin.length() - 1);
+                }
+            }
+        )
+        .handle<cancel_pressed>( // 3
+            [&] (const cancel_pressed &msg) {
+                state = &atm::done_processing;
+            }
+        );
+}
+```
+
+如你所见，这种编程风格可以大大简化设计并发系统的任务，因为每个线程都可以完全独立处理。这是一个使用多个线程来分离关注点的示例，因此需要明确决定如何在线程之间划分任务。
