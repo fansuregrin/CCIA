@@ -21,7 +21,7 @@
     - [Functional programming with futures](#使用-future-进行函数式编程)
     - [Synchronizing operations with message passing](#通过消息传递来同步操作)
     - [Continuation-style concurrency with the Concurrency TS](#使用并发-ts-实现延续式并发)
-    - Chaining continuations
+    - [Chaining continuations](#链接延续)
     - Waiting for more than one future
     - Waiting for the first future in a set with when_any
     - Latches and barriers in the Concurrency TS
@@ -826,5 +826,75 @@ spawn_async(Func &&func) {
     );
     t.detach();
     return res;
+}
+```
+
+### 链接延续
+假设你有一系列耗时的任务要执行，并且你希望异步执行这些任务，以便释放主线程来执行其他任务。例如，当用户登录到你的应用程序时，你可能需要将凭据发送到后端进行身份验证；然后，在详细信息通过身份验证后，向后端发出进一步的请求以获取有关用户帐户的信息；最后，在检索到该信息后，使用相关信息更新显示。
+
+串行的代码示例如下：
+```cpp
+// Listing 4.18 A simple sequential function to process user login
+void process_login(const std::string &username, const std::string &password) {
+    try {
+        const user_id id = backend.authenticate_user(username, password);
+        const user_data info_to_display = backend.request_current_info(id);
+        update_display(info_to_display);
+    } catch (std::exception &e) {
+        display_error(e);
+    }
+}
+```
+
+使用普通的 `std::async`，可以将所有内容都放到后台线程中，但这仍然会阻塞该线程，并在等待任务完成时消耗资源。
+```cpp
+// Listing 4.19 Processing user login with a single async task
+std::future<void> process_login(const std::string &username, const std::string &password) {
+    return std::async(std::launch::async, [=] () {
+        try {
+            const user_id id = backend.authenticate_user(username, password);
+            const user_data info_to_display = backend.request_current_info(id);
+            update_display(info_to_display);
+        } catch (std::exception &e) {
+            display_error(e);
+        }
+    });
+}
+```
+
+为了避免所有这些线程被阻塞，你需要某种机制来在任务完成时将它们链接起来：延续。下面的清单显示了相同的总体流程，但这次将其分成一系列任务，每个任务都作为延续链接到前一个任务上。
+```cpp
+// Listing 4.20 A function to process user login with continuations
+std::experimental::future<void> process_login(
+const std::string &username, const std::string &password) {
+    return spawn_async([=] () {
+        return backend.authenticate_user(username, password);
+    }).then([] (std::experimental::future<user_id> id) {
+        return backend.request_current_info(id.get());
+    }).then([] (std::experimental::future<user_data> info_to_display) {
+        try {
+            update_display(info_to_display.get());
+        } catch (std::exception &e) {
+            display_error(e);
+        }
+    });
+}   
+```
+
+即使将任务拆分为各个部分，但它们仍会阻塞调用，因此线程阻塞的情况依然存在。现在需要的是：在数据准备就绪时，后端调用返回就绪的 `future`，而不会阻塞任何线程。在这种情况下，`backend.async_authenticate_user(username, password)` 现在将返回 `std::experimental::future<user_id>`，而不是普通的 `user_id`。
+```cpp
+// Listing 4.21 A function to process user login with fully asynchronous operations
+std::experimental::future<void> process_login(
+const std::string &username, const std::string &password) {
+    return backend.async_authenticate_user(username, password).then(
+    [] (std::experimental::future<user_id> id) {
+        return backend.async_request_current_info(id.get());
+    }).then([] (std::experimental::future<user_data> info_to_display) {
+        try {
+            update_display(info_to_display.get());
+        } catch (std::exception &e) {
+            display_error(e);
+        }
+    });
 }
 ```
