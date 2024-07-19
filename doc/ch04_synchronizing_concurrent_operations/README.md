@@ -22,7 +22,7 @@
     - [Synchronizing operations with message passing](#通过消息传递来同步操作)
     - [Continuation-style concurrency with the Concurrency TS](#使用并发-ts-实现延续式并发)
     - [Chaining continuations](#链接延续)
-    - Waiting for more than one future
+    - [Waiting for more than one future](#等待多个-future)
     - Waiting for the first future in a set with when_any
     - Latches and barriers in the Concurrency TS
     - A basic latch type: `std::experimental::latch`
@@ -896,5 +896,55 @@ const std::string &username, const std::string &password) {
             display_error(e);
         }
     });
+}
+```
+
+
+### 等待多个 future
+如果需要等待多个任务完成后、收集这些任务产生的结果、并进行下一步处理，使用 `std::async` 来实现的代码如下所示：
+```cpp
+// Listing 4.22 Gathering results from futures using std::async
+std::future<ChunkResult> process_data(std::vector<MyData> &vec) {
+    const size_t chunk_size = whatever;
+    std::vector<std::future<ChunkResult>> results;
+    for (auto beg = vec.begin(), end = vec.end(); beg != end;) {
+        const size_t remaining_size = end - beg;
+        const size_t this_chunk_size = std::min(remaining_size, chunk_size);
+        results.push_back(std::async(process_chunk, beg, beg + this_chunk_size));
+        beg += this_chunk_size;
+    }
+    return std::async([all_results = std::move(results)] {
+        std::vector<ChunkResult> v;
+        v.reserse(all_results.size());
+        for (auto &f : all_results) {
+            v.push_back(f.get()); // 1
+        }
+        return gather_results(v);
+    });
+}
+```
+
+由于上面的代码会单独等待每个任务，因此当每个结果可用时，在 1 处的会被调度程序反复唤醒，然后当它发现另一个尚未准备好的结果时再次返回休眠状态。这不仅占用了等待的线程，而且在每个 `future` 准备就绪时增加了额外的上下文切换，从而增加了额外的开销。使用 `std::experimental::when_all` 可以避免切换和等待：
+```cpp
+// Listing 4.23 Gathering results from futures using std::experimental::when_all
+std::experimental::future<ChunkResult> process_data(std::vector<MyData> &vec) {
+    const size_t chunk_size = whatever;
+    std::vector<std::experimental::future<ChunkResult>> results;
+    for (auto beg = vec.begin(), end = vec.end(); beg != end;) {
+        const size_t remaining_size = end - beg;
+        const size_t this_chunk_size = std::min(remaining_size, chunk_size);
+        results.push_back(spawn_async(process_chunk, beg, beg + this_chunk_size));
+        beg += this_chunk_size;
+    }
+    return std::experimental::when_all(results.begin(), results.end()) // 1
+        .then([] (std::future<std::vector<std::experimental::future<ChunkResult>>> ready_results) {
+            std::vector<std::experimental::future<ChunkResult>> all_results = ready_results.get();
+            std::vector<ChunkResult> v;
+            v.reserse(all_results.size());
+            for (auto &f : all_results) {
+                v.push_back(f.get()); // 2
+            }
+            return gather_results(v);
+        });
 }
 ```
