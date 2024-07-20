@@ -26,7 +26,7 @@
     - [Waiting for the first future in a set with when_any](#使用-when_any-等待集合中的第一个-future)
     - [Latches and barriers in the Concurrency TS](#锁存器-latch-和栅栏-barrier)
     - [A basic latch type: `std::experimental::latch`](#锁存器-stdlatch)
-    - `std::experimental::barrier`: a basic barrier
+    - [`std::experimental::barrier`: a basic barrier](#基本的-barrier-stdexperimentalbarrier)
     - `std::experimental::flex_barrier` — `std::experimental::barrier`’s flexible friend
 
 ## 等待事件或其他条件
@@ -1038,5 +1038,43 @@ void foo() {
     }
     done.wait(); // 5 阻塞直到计数器计数到达零
     process_data(data, thread_count); // 6 这里访问 data 是安全的，因为 3处 和 5处 是同步的
+}
+```
+
+### 基本的 barrier: `std::experimental::barrier`
+用一组线程来处理一批数据，这些线程各自处理数据是不需要同步的。但是，这组线程需要等待数据到来并且等待这批数据被分割好后才能开始处理，等这组线程处理完数据后，才能对处理好的数据进行后续的操作。`std::barrier`（`std::experimental::barrier` 是 Concurrency TS 中的，现在已经进入 C++ 20 标准库中了）就可以应对这样的场景。在构造 `std::barrier` 对象时，需要指定参与同步的线程数量。通过在 `std::barrier` 对象上调用 `arrive_and_wait()`，当线程执行完 `arrive_and_wait()` 前面的代码后，会等待组内其他线程到达。当组内的最后一个线程到达后，barrier 被重置，线程继续执行后面的代码。
+
+一个使用 `barrier` 来同步一组线程的例子：
+```cpp
+// Listing 4.26 Using std::experimental::barrier
+result_chunk process(data_chunk);
+std::vector<data_chunk> divide_into_chunks(data_block data, unsigned num_threads);
+
+void process_data(data_source &source, data_sink &sink) {
+    unsigned const concurrency = std::thread::hardware_concurrency();
+    unsigned const num_threads = (concurrency > 0) ? concurrency : 2;
+    
+    std::barrier sync(num_threads); // 创建 barrier 对象
+    std::vector<joining_thread> threads(num_threads);
+
+    std::vector<data_chunk> chunks;
+    result_block result;
+    
+    for (unsigned i=0; i<num_threads; ++i) {
+        threads[i] = joining_thread([&,i] {
+            while (!source.done()) {
+                if (!i) { // 1 只有第一个线程能从 source 获取数据并分块
+                    data_block current_block = source.get_next_data_block();
+                    chunks = divide_into_chunks(current_block, num_threads);
+                }
+                sync.arrive_and_wait(); // 2 所有线程都在这里等待串行代码（获取数据并分块）完成
+                result.set_chunk(i, num_threads, process(chunks[i])); // 3 处理数据并设置结果
+                sync.arrive_and_wait(); // 4 等待所有线程都处理完各自的数据
+                if (!i) { // 5 只有第一个线程能将结果写入 sink
+                    sink.write_data(std::move(result));
+                }
+            }
+        });
+    }
 }
 ```
