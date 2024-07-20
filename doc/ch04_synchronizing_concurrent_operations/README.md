@@ -23,7 +23,7 @@
     - [Continuation-style concurrency with the Concurrency TS](#使用并发-ts-实现延续式并发)
     - [Chaining continuations](#链接延续)
     - [Waiting for more than one future](#等待多个-future)
-    - Waiting for the first future in a set with when_any
+    - [Waiting for the first future in a set with when_any](#使用-when_any-等待集合中的第一个-future)
     - Latches and barriers in the Concurrency TS
     - A basic latch type: `std::experimental::latch`
     - `std::experimental::barrier`: a basic barrier
@@ -946,5 +946,69 @@ std::experimental::future<ChunkResult> process_data(std::vector<MyData> &vec) {
             }
             return gather_results(v);
         });
+}
+```
+
+### 使用 `when_any` 等待集合中的第一个 `future`
+假设有多个任务组成的集合，当第一个完成的任务将结果准备好后，就能进行接下来的任务了；这中情况下， 可以使用 `std::experimental::when_any`。在这里，`std::experimental::when_any` 将 `future`们 集合在一起，并提供一个新的 `future`，当原始集合中至少有一个准备好时，该 `future` 即可准备好。虽然 `when_all` 为您提供了一个包装您传入的 `future` 集合的 `future`，但 `when_any` 增加了另一个层，将集合与一个索引值组合在一起，该索引值指示哪个 `future` 触发了组合 `future` 准备就绪，并将其放入 `std::experimental::when_any_result` 类模板的实例中。
+
+一个使用 `when_any` 的例子：
+```cpp
+// Listing 4.24 Using std::experimental::when_any to process the first value found
+std::experimental::future<FinalResult>
+find_and_process_value(std::vector<MyData> &data) {
+    const unsigned concurrency = std::thread::hardware_concurrency();
+    const unsigned num_tasks = (concurrency > 0) ? concurrency : 2;
+    std::vector<std::experimental::future<MyData *>> results;
+    const auto chunk_size = (data.size() + num_tasks - 1) / num_tasks;
+    auto chunk_begin = data.begin();
+    std::shared_ptr<std::atomic<bool>> done_flag = std::make_shared<std::atomic<bool>>(false);
+    for (unsigned i = 0; i < num_tasks; ++i) { // 1
+        auto chunk_end = (i < num_tasks - 1) ? chunk_begin + chunk_size : data.end();
+        results.push_back(spawn_async([=] { // 2
+            for (auto entry = chunk_begin; !*done_flag && entry != chunk_end; ++entry) {
+                if (matches_find_criteria(*entry)) {
+                    *done_flag = true;
+                    return &*entry;
+                }
+            }
+            return (MyData *)nullptr;
+        }));
+        chunk_begin = chunk_end;
+    }
+
+    std::shared_ptr<std::experimental::promise<FinalResult>> final_result = 
+        std::make_shared<std::experimental::promise<FinalResult>>();
+    
+    struct DoneCheck {
+        std::shared_ptr<std::experimental::promise<FinalResult>> final_result;
+        
+        DoneCheck(std::shared_ptr<std::experimental::promise<FinalResult>> final_result_)
+            : final_result(std::move(final_result_)) {}
+        
+        void operator()( // 4
+            std::experimental::future<std::experimental::when_any_result<
+                std::vector<std::experimental::future<MyData *>>>> results_param
+        ) {
+            auto results = results_param.get();
+            const MyData *ready_result = results.futures[results.index].get(); // 5
+            if (ready_result) {
+                final_result->set_value(process_found_value(*ready_result)); // 6
+            } else {
+                results.futures.erase(results.futures.begin() + results.index); // 7
+                if (!results.futures.empty()) {
+                    std::experimental::when_any(results.futures.begin(), results.futures.end()) // 8
+                        .then(std::move(*this));
+                } else {
+                    final_result->set_exception(
+                        std::make_exception_ptr(std::runtime_error("Not found"))); // 9
+                }
+            }
+        }
+    }
+
+    std::experimental::when_any(results.begin(), results.end())
+        .then(DoneCheck(final_result)); // 3
+    return final_result->get_future(); // 10
 }
 ```
