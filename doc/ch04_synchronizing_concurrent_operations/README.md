@@ -24,7 +24,7 @@
     - [Chaining continuations](#链接延续)
     - [Waiting for more than one future](#等待多个-future)
     - [Waiting for the first future in a set with when_any](#使用-when_any-等待集合中的第一个-future)
-    - Latches and barriers in the Concurrency TS
+    - [Latches and barriers in the Concurrency TS](#锁存器-latch-和栅栏-barrier)
     - A basic latch type: `std::experimental::latch`
     - `std::experimental::barrier`: a basic barrier
     - `std::experimental::flex_barrier` — `std::experimental::barrier`’s flexible friend
@@ -1012,3 +1012,11 @@ find_and_process_value(std::vector<MyData> &data) {
     return final_result->get_future(); // 10
 }
 ```
+
+### 锁存器 (latch) 和栅栏 (barrier)
+Latch（锁存器/线程闩）是一种同步对象，当其计数器递减为零时，该对象将变为就绪状态。Latch 的名称源于其锁存输出的事实，一旦就绪，它就会一直保持就绪状态，直到被销毁。因此，latch 是一种用于等待一系列事件发生的轻量级工具。
+
+Barrier（屏障/栅栏/线程卡）是一种可重复使用的同步组件，用于一组线程之间的内部同步。Latch 并不关心哪些线程会减少计数器（同一个线程可以多次减少计数器，或者多个线程可以各自减少计数器一次，或者两者结合），而使用 barrier 时，每个线程每个周期只能到达 barrier 一次。当线程到达 barrier 时，它们会阻塞，直到所有相关线程都到达屏障，此时它们都会被释放。可以重复使用 barrier - 然后线程可以再次到达 barrier，等待所有线程进入下一个周期。
+
+Latch 和 barrier 是在 Concurrency TS 中提出的，现在已经进入 C++ 20 标准库了。
+
