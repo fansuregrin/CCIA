@@ -27,7 +27,7 @@
     - [Latches and barriers in the Concurrency TS](#锁存器-latch-和栅栏-barrier)
     - [A basic latch type: `std::experimental::latch`](#锁存器-stdlatch)
     - [`std::experimental::barrier`: a basic barrier](#基本的-barrier-stdexperimentalbarrier)
-    - `std::experimental::flex_barrier` — `std::experimental::barrier`’s flexible friend
+    - [`std::experimental::flex_barrier` — `std::experimental::barrier`'s flexible friend](#stdexperimentalflex_barrier)
 
 ## 等待事件或其他条件
 当一个线程等待另一个线程完成某项任务时，有这几种选择：
@@ -1078,3 +1078,43 @@ void process_data(data_source &source, data_sink &sink) {
     }
 }
 ```
+
+### `std::experimental::flex_barrier`
+`std::experimental::flex_barrier` 比 `std::experimental::barrier` 灵活的地方是在构造对象时可以指定一个 completion function。一旦所有线程都到达 barrier，此函数就会在到达 barrier 的线程之一上运行。它不仅提供了一种指定必须连续运行的代码块的方法，还提供了一种更改下一个周期必须到达 barrier 的线程数的方法。在 C++ 20 中，没有 `flex_barrier`，`std::barrier` 提供 `std::experimental::flex_barrier` 的功能。
+
+一个使用 `flex_barrier` 的例子：
+```cpp
+void process_data(data_source &source, data_sink &sink) {
+    unsigned const concurrency = std::thread::hardware_concurrency();
+    unsigned const num_threads = (concurrency > 0) ? concurrency : 2;
+    
+    std::vector<data_chunk> chunks;
+
+    auto split_source = [&] { // 1
+        if (!source.done()) {
+            data_chunk current_block = source.get_next_data_block();
+            chunks = divide_into_chunks(current_block, num_threads);
+        }
+    };
+
+    split_source(); // 2
+
+    result_block result;
+
+    std::barrier sync(num_threads, [&] { // 3
+        sink.write_data(std::move(result));
+        split_source(); // 4
+        return -1; // 5 -1表示下一轮参与同步的线程数量保持不变，其他大于等于0的数表示下一轮参与同步的线程数量
+    });
+
+    std::vector<joining_thread> threads(num_threads);
+    for (unsigned i = 0; i < num_threads; ++i) {
+        threads[i] = joining_thread([&, i] {
+            while (!source.done()) { // 6
+                result.set_chunk(i, num_threads, process(chunks[i]));
+                sync.arrive_and_wait(); // 7
+            }
+        });
+    }
+}
+``
