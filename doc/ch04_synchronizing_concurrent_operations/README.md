@@ -25,7 +25,7 @@
     - [Waiting for more than one future](#等待多个-future)
     - [Waiting for the first future in a set with when_any](#使用-when_any-等待集合中的第一个-future)
     - [Latches and barriers in the Concurrency TS](#锁存器-latch-和栅栏-barrier)
-    - A basic latch type: `std::experimental::latch`
+    - [A basic latch type: `std::experimental::latch`](#锁存器-stdlatch)
     - `std::experimental::barrier`: a basic barrier
     - `std::experimental::flex_barrier` — `std::experimental::barrier`’s flexible friend
 
@@ -1020,3 +1020,23 @@ Barrier（屏障/栅栏/线程卡）是一种可重复使用的同步组件，�
 
 Latch 和 barrier 是在 Concurrency TS 中提出的，现在已经进入 C++ 20 标准库了。
 
+### 锁存器 (`std::latch`)
+一个使用 `std::latch` 的例子：
+```cpp
+// Listing 4.25 Waiting for events with std::experimental::latch
+void foo() {
+    const unsigned thread_count = 5;
+    std::latch done(thread_count); // 1 构造一个 latch 对象，初始化内部的计数器
+    my_data data[thread_count];
+    std::vector<std::future<void>> threads;
+    for (unsigned i = 0; i < thread_count; ++i) {
+        threads.push_back(std::async(std::launch::async, [&,i] { // 2
+            data[i] = make_data(i);
+            done.count_down(); // 3 将 latch 中的计数减一
+            do_more_stuff();  // 4
+        }));
+    }
+    done.wait(); // 5 阻塞直到计数器计数到达零
+    process_data(data, thread_count); // 6 这里访问 data 是安全的，因为 3处 和 5处 是同步的
+}
+```
