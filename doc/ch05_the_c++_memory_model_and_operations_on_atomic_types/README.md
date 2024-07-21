@@ -2,7 +2,7 @@
 ## The Outline
 - [Memory model basics](#内存模型基础)
     - [Objects and memory locations](#对象和内存位置)
-    - Objects, memory locations, and concurrency
+    - [Objects, memory locations, and concurrency](#对象内存位置和并发)
     - Modification orders
 - Atomic operations and types in C++
     - The standard atomic types
@@ -75,3 +75,9 @@ my_data x;
 - 每个对象至少占用一个内存位置。
 - 基本类型的变量（如 `int` 或 `char`）只占用一个内存位置，无论其大小如何，即使它们是相邻的或属于数组的一部分。
 - 相邻的位域是同一内存位置的一部分。
+
+### 对象、内存位置和并发
+如果来自不同线程对单个内存位置的两次访问之间没有强制排序，则其中一个或两个访问都不是原子的，并且如果其中一个或两个都是写入，那么这就是一个数据争用并导致未定义的行为。
+
+- 未定义的行为会造成不可预料的问题。
+- 可以通过原子操作来访问参与竞争的内存位置来避免未定义的行为。
