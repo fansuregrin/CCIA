@@ -3,7 +3,7 @@
 - [Memory model basics](#内存模型基础)
     - [Objects and memory locations](#对象和内存位置)
     - [Objects, memory locations, and concurrency](#对象内存位置和并发)
-    - Modification orders
+    - [Modification orders](#修改顺序)
 - Atomic operations and types in C++
     - The standard atomic types
     - Operations on `std::atomic_flag`
@@ -81,3 +81,6 @@ my_data x;
 
 - 未定义的行为会造成不可预料的问题。
 - 可以通过原子操作来访问参与竞争的内存位置来避免未定义的行为。
+
+### 修改顺序
+在 C++ 程序中，每一个对象都有一个修改顺序，它由程序中所有线程对这个对象的写入操作组成。在大多数情况下，多次运行一个程序，每一次运行中对象的修改顺序可能不同；但是，在某一次运行中，所有线程都同意对这个对象的修改顺序。也就是说，每次运行过程中，所有线程看到某个对象的变化序列是一样的。使用原子操作，编译器会确保这种同步。
