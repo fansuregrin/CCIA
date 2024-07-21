@@ -4,7 +4,7 @@
     - [Objects and memory locations](#对象和内存位置)
     - [Objects, memory locations, and concurrency](#对象内存位置和并发)
     - [Modification orders](#修改顺序)
-- Atomic operations and types in C++
+- [Atomic operations and types in C++](#c-原子操作和原子类型)
     - The standard atomic types
     - Operations on `std::atomic_flag`
     - Operations on `std::atomic<bool>`
@@ -84,3 +84,7 @@ my_data x;
 
 ### 修改顺序
 在 C++ 程序中，每一个对象都有一个修改顺序，它由程序中所有线程对这个对象的写入操作组成。在大多数情况下，多次运行一个程序，每一次运行中对象的修改顺序可能不同；但是，在某一次运行中，所有线程都同意对这个对象的修改顺序。也就是说，每次运行过程中，所有线程看到某个对象的变化序列是一样的。使用原子操作，编译器会确保这种同步。
+
+## C++ 原子操作和原子类型
+原子操作是不可分割的操作，不能从任何一个线程观察到操作的中间状态，这个操作要么完成要么还未开始。在 C++ 中，在大多数情况下需要通过原子类型来实现原子操作。
+
