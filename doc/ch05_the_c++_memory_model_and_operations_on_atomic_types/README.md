@@ -1,6 +1,6 @@
 # The C++ Memory Model and Operations on Atomic Types
 ## The Outline
-- Memory model basics
+- [Memory model basics](#内存模型基础)
     - Objects and memory locations
     - Objects, memory locations, and concurrency
     - Modification orders
@@ -20,3 +20,6 @@
     - Fences
     - Ordering non-atomic operations with atomics
     - Ordering non-atomic operations
+
+## 内存模型基础
+内存模型有两个方面：基本结构方面（涉及事物在内存中的布局方式）和并发方面。
