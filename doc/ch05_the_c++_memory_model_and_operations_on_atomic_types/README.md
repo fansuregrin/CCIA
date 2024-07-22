@@ -6,7 +6,7 @@
     - [Modification orders](#修改顺序)
 - [Atomic operations and types in C++](#c-原子操作和原子类型)
     - [The standard atomic types](#标准原子类型)
-    - Operations on `std::atomic_flag`
+    - [Operations on `std::atomic_flag`](#在-stdatomic_flag-上的操作)
     - Operations on `std::atomic<bool>`
     - Operations on `std::atomic<T*>`: pointer arithmetic
     - Operations on standard atomic integral types
@@ -139,3 +139,33 @@ C++ 中提供的原子类型有 `std::atomic_flag` 和 `std::atomic<>`。可以�
 - *Store* 操作：可以指定 `std::memory_order_relaxed`、`std::memory_order_release`、`std::memory_order_seq_cst`。
 - *Load* 操作：可以指定 `std::memory_order_relaxed`、`std::memory_order_acquire`、`std::memory_order_seq_cst`。
 - *Read-modify-write* 操作：可以指定 `std::memory_order_relaxed`、`std::memory_order_consume`、`std::memory_order_acquire`、`std::memory_order_release`、`std::memory_order_acq_rel`、`std::memory_order_seq_cst`。
+
+### 在 `std::atomic_flag` 上的操作
+`std::atomic_flag` 是最简单的标准原子类型，它表示一个布尔标志。这种类型的对象只有两种状态：设置（set）和清除（clear）。`std::atomic_flag` 的对象必须被初始化为 `ATOMIC_FLAG_INIT`，会初始化对象为清除状态。当一个 `std::atomic_flag` 对象被初始化后，只能对它进行 3 种操作：销毁对象（析构函数）、清除标志（成员函数 `clear()`）、设置标志并获取旧值（成员函数 `test_and_set()`）。`clear()` 是一个存储（store）操作，`test_and_set()` 是一个读-改-写（read-modify-write）操作。
+
+例如：
+```cpp
+std::atomic_flag f = ATOMIC_FLAG_INIT;
+f.clear(std::memory_order_release);
+bool x = f.test_and_set();
+```
+
+可以使用 `std::atomic_flag` 实现一个自旋锁（spinlock）:
+```cpp
+// Listing 5.1 Implementation of a spinlock mutex using std::atomic_flag
+class spinlock_mutex {
+    std::atomic_flag flag;
+public:
+    spinlock_mutex(): flag(ATOMIC_FLAG_INIT) {}
+
+    void lock() {
+        while (flag.test_and_set(std::memory_order_acquire));
+    }
+
+    void unlock() {
+        flag.clear(std::memory_order_release);
+    }
+};
+```
+
+`std::atomic_flag` 的功能有限，它甚至不能用作普通的布尔标志，因为它不提供非修改性的查询操作。
